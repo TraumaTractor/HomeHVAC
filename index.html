@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Energy Live</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#0b0e14; --panel:#131824; --panel2:#1a2132; --ink:#e9edf5; --muted:#8792a8; --line:#243049;
+  --solar:#fbbf24; --batt:#34d399; --chg:#2dd4bf; --grid:#818cf8; --exp:#f472b6; --bad:#f87171; --accent:#38bdf8;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,Segoe UI,Roboto,sans-serif}
+.mono{font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;gap:14px 24px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+.brand{font-weight:700;font-size:17px;letter-spacing:.02em}
+.brand i{color:var(--solar);font-style:normal}
+.clock{font-size:26px;font-weight:600;min-width:74px}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:none;color:var(--muted);border:0;padding:6px 10px;font:inherit;cursor:pointer}
+.seg button.on{background:var(--accent);color:#04121c;font-weight:600}
+.seg button:hover:not(.on){color:var(--ink)}
+#scrub{width:200px;accent-color:var(--accent)}
+.chip{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600;background:#12301f;color:var(--batt)}
+.chip.bad{background:#3a1717;color:var(--bad)}
+.spacer{flex:1}
+main{padding:16px;display:grid;gap:16px;max-width:1500px;margin:0 auto}
+.top{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(280px,1fr);gap:16px}
+@media(max-width:980px){.top{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.card h2{margin:0 0 10px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:10px}
+svg text{fill:var(--ink);font-family:inherit}
+.nl{font-size:12px;fill:var(--muted)!important}
+.nv{font-size:24px;font-weight:700}
+.ns{font-size:12px;fill:var(--muted)!important}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.kpi{background:var(--panel2);border-radius:10px;padding:10px 12px}
+.kpi small{display:block;color:var(--muted);font-size:12px}
+.kpi b{font-size:22px}
+.kpi span{font-size:12px;color:var(--muted)}
+.big{grid-column:1/-1}
+.big b{font-size:34px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px;transition:border-color .2s}
+.tile.on{border-color:var(--c)}
+.tile .hd{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tile .nm{font-weight:600}
+.tile .nm::before{content:"";display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--c);margin-right:7px}
+.tile .kw{font-size:24px;font-weight:700}
+.tile .kw small{font-size:12px;color:var(--muted);font-weight:400}
+.bar{height:5px;background:#0e1420;border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--c);width:0;transition:width .15s}
+.sub{font-size:12px;color:var(--muted);min-height:17px}
+.sw{position:relative;width:42px;height:24px;flex:none}
+.sw input{opacity:0;width:100%;height:100%;margin:0;position:absolute;cursor:pointer;z-index:1}
+.sw span{position:absolute;inset:0;background:#2a3550;border-radius:99px;transition:.2s}
+.sw span::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#cbd5e1;transition:.2s}
+.sw input:checked+span{background:var(--c,var(--accent))}
+.sw input:checked+span::after{left:21px;background:#fff}
+.step{display:flex;align-items:center;gap:6px}
+.step button,.btn{background:#0e1420;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:2px 9px;font:inherit;cursor:pointer}
+.step button:hover,.btn:hover{border-color:var(--accent)}
+.sys{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:4px 28px}
+.f{display:grid;grid-template-columns:120px 1fr 74px;gap:10px;align-items:center;margin:5px 0}
+.f label{color:var(--muted)}
+.f output{text-align:right}
+.f input[type=range]{width:100%;accent-color:var(--accent)}
+select,input[type=number]{background:#0e1420;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:inherit;width:100%}
+.sysh{font-weight:600;margin:6px 0 2px}
+canvas{width:100%;display:block;cursor:crosshair}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted);margin-top:8px}
+.legend .d{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}
+#readout{text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink);font-size:12px}
+.row2{display:flex;gap:10px;align-items:center}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><i>&#9889;</i> Homegrid <span style="color:var(--muted);font-weight:400">Live</span></div>
+  <div class="clock mono" id="clock">--:--</div>
+  <div class="seg" id="speed">
+    <button data-s="0" title="Pause">&#10074;&#10074;</button>
+    <button data-s="1">1&times;</button>
+    <button data-s="10">10&times;</button>
+    <button data-s="60" class="on">60&times;</button>
+    <button data-s="300">300&times;</button>
+    <button data-s="1800">1800&times;</button>
+  </div>
+  <input type="range" id="scrub" min="0" max="1439" step="1" title="Jump to time of day">
+  <label class="row2"><span class="sw" style="--c:var(--accent)"><input type="checkbox" id="auto" checked><span></span></span> Autopilot routine</label>
+  <div class="spacer"></div>
+  <span class="chip" id="gridChip">GRID CONNECTED</span>
+  <label class="row2"><span class="sw" style="--c:var(--bad)"><input type="checkbox" id="outage"><span></span></span> Grid outage</label>
+</header>
+
+<main>
+  <div class="top">
+    <div class="card">
+      <h2>Live power flow <span id="tariffNow" class="mono"></span></h2>
+      <svg id="flow" viewBox="0 0 700 380" width="100%" role="img" aria-label="Power flow diagram">
+        <g id="paths"></g>
+        <!-- solar -->
+        <g transform="translate(40,60)"><rect width="130" height="70" rx="12" fill="#1a2132" stroke="#243049"/>
+          <circle cx="24" cy="26" r="8" fill="#fbbf24"/>
+          <g stroke="#fbbf24" stroke-width="2" stroke-linecap="round"><path d="M24 11v-4M24 41v4M9 26h-4M39 26h4M13 15l-3-3M35 37l3 3M35 15l3-3M13 37l-3 3"/></g>
+          <text x="46" y="22" class="nl">Solar</text><text id="nSolar" x="46" y="46" class="nv mono">0.0</text><text id="nSolarU" x="112" y="46" class="ns" text-anchor="end">kW</text>
+          <text id="nSolarS" x="12" y="63" class="ns"></text></g>
+        <!-- grid -->
+        <g transform="translate(530,60)"><rect width="130" height="70" rx="12" fill="#1a2132" stroke="#243049"/>
+          <path d="M24 38 L24 12 M14 20h20 M16 28h16 M24 12 L14 38 M24 12 L34 38" stroke="#818cf8" stroke-width="2" fill="none" stroke-linecap="round"/>
+          <text x="46" y="22" class="nl">Grid</text><text id="nGrid" x="46" y="46" class="nv mono">0.0</text><text id="nGridU" x="118" y="46" class="ns" text-anchor="end">kW</text>
+          <text id="nGridS" x="12" y="63" class="ns"></text></g>
+        <!-- house -->
+        <g transform="translate(290,160)">
+          <path d="M-6 38 L70 -2 L146 38 Z" fill="#243049"/>
+          <rect x="6" y="30" width="128" height="62" rx="6" fill="#1a2132" stroke="#243049"/>
+          <text x="70" y="52" text-anchor="middle" class="nl">House demand</text>
+          <text id="nHouse" x="62" y="80" text-anchor="middle" class="nv mono" style="font-size:28px">0.0</text>
+          <text x="104" y="80" class="ns">kW</text></g>
+        <!-- battery -->
+        <g transform="translate(290,290)"><rect width="140" height="70" rx="12" fill="#1a2132" stroke="#243049"/>
+          <rect x="12" y="20" width="40" height="22" rx="4" fill="none" stroke="#8792a8" stroke-width="2"/><rect x="52" y="26" width="4" height="10" fill="#8792a8"/>
+          <rect id="nBatFill" x="15" y="23" width="0" height="16" rx="2" fill="#34d399"/>
+          <text x="68" y="22" class="nl" id="nBatL">Battery</text><text id="nBat" x="68" y="46" class="nv mono">0.0</text><text x="128" y="46" class="ns" text-anchor="end">kW</text>
+          <text id="nBatS" x="12" y="62" class="ns"></text></g>
+      </svg>
+      <div class="legend" style="margin-top:0">
+        <span><span class="d" style="background:var(--solar)"></span>Solar</span>
+        <span><span class="d" style="background:var(--batt)"></span>Battery discharge</span>
+        <span><span class="d" style="background:var(--chg)"></span>Battery charge</span>
+        <span><span class="d" style="background:var(--grid)"></span>Grid import</span>
+        <span><span class="d" style="background:var(--exp)"></span>Grid export</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Right now</h2>
+      <div class="kpis">
+        <div class="kpi big"><small>Today so far</small><b class="mono" id="kBill">$0.00</b> <span>net bill</span></div>
+        <div class="kpi"><small>Consumed</small><b class="mono" id="kLoad">0</b> <span>kWh</span></div>
+        <div class="kpi"><small>Solar generated</small><b class="mono" id="kSolar">0</b> <span>kWh</span></div>
+        <div class="kpi"><small>Grid imported</small><b class="mono" id="kImp">0</b> <span>kWh</span></div>
+        <div class="kpi"><small>Grid exported</small><b class="mono" id="kExp">0</b> <span>kWh</span></div>
+        <div class="kpi"><small>Self-sufficiency</small><b class="mono" id="kSS">0%</b></div>
+        <div class="kpi"><small>Outdoor temp</small><b class="mono" id="kTemp">0&deg;</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Appliances <span style="text-transform:none;letter-spacing:0;font-weight:400">Flip a switch &mdash; demand changes immediately</span></h2>
+    <div class="tiles" id="tiles"></div>
+  </div>
+
+  <div class="card">
+    <h2>Today&rsquo;s timeline (kW) <span id="readout" class="mono">hover for values</span></h2>
+    <canvas id="chart" height="300"></canvas>
+    <div class="legend" id="leg"></div>
+  </div>
+
+  <div class="card">
+    <h2>System</h2>
+    <div class="sys">
+      <div>
+        <div class="sysh">Solar &amp; weather</div>
+        <div class="f"><label>Array size</label><input type="range" id="solarKw" min="0" max="20" step="0.5"><output id="solarKwO"></output></div>
+        <div class="f"><label>Season</label><select id="season" style="grid-column:2/4"><option value="summer">Summer</option><option value="spring">Spring / autumn</option><option value="winter">Winter</option></select></div>
+        <div class="f"><label>Sky</label><select id="weather" style="grid-column:2/4"><option value="1">Clear</option><option value="0.6">Partly cloudy</option><option value="0.2">Overcast</option></select></div>
+        <div class="f"><label>Max temp</label><input type="range" id="tmax" min="8" max="45" step="1"><output id="tmaxO"></output></div>
+      </div>
+      <div>
+        <div class="sysh">Battery</div>
+        <div class="f"><label>Capacity</label><input type="range" id="batKwh" min="0" max="30" step="0.5"><output id="batKwhO"></output></div>
+        <div class="f"><label>Max power</label><input type="range" id="batKw" min="0.5" max="15" step="0.5"><output id="batKwO"></output></div>
+        <div class="f"><label>Reserve</label><input type="range" id="batMin" min="0" max="50" step="5"><output id="batMinO"></output></div>
+        <div class="f"><label>Mode</label><select id="batMode" style="grid-column:2/4"><option value="self">Self-consumption</option><option value="offpeak">Self-consumption + off-peak grid charge</option><option value="idle">Idle (hold charge)</option></select></div>
+      </div>
+      <div>
+        <div class="sysh">Grid connection &amp; tariff</div>
+        <div class="f"><label>Import limit</label><input type="range" id="impLim" min="2" max="30" step="1"><output id="impLimO"></output></div>
+        <div class="f"><label>Export limit</label><input type="range" id="expLim" min="0" max="15" step="0.5"><output id="expLimO"></output></div>
+        <div class="f"><label>Peak / off-peak</label><span style="grid-column:2/4;display:flex;gap:6px"><input type="number" id="pPeak" step="0.01" min="0"><input type="number" id="pOff" step="0.01" min="0"><input type="number" id="pFit" step="0.01" min="0" title="Feed-in"></span></div>
+        <div class="sub">Prices in $/kWh: peak (07:00&ndash;21:00), off-peak, feed-in.</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => Math.min(b,Math.max(a,v));
+const f1 = x => x.toFixed(1), f2 = x => x.toFixed(2);
+const BAT_EFF = 0.95, SOLAR_EFF = 0.85;
+
+// ---- configuration ---------------------------------------------------------
+// kind: 'cycle' runs `cycle` minutes then switches itself off; 'hold' stays on until switched off;
+//       'hvac' thermostat-driven; 'ev' charges until its energy target is met.
+// routine: [minuteOfDay, 'on'|'off'] events fired by Autopilot.
+const hm = (h,m=0) => h*60+m;
+const APPS = [
+  {id:'hvac',  name:'HVAC',            color:'#38bdf8', kw:3.5, kind:'hvac',  routine:[[hm(11),'on'],[hm(22),'off']]},
+  {id:'hw',    name:'Hot water',       color:'#f472b6', kw:3.0, kind:'cycle', cycle:120, routine:[[hm(1),'on']]},
+  {id:'wash',  name:'Washing machine', color:'#a78bfa', kw:0.5, kind:'cycle', cycle:90,  routine:[[hm(9),'on']]},
+  {id:'dry',   name:'Dryer',           color:'#c084fc', kw:2.4, kind:'cycle', cycle:75,  routine:[[hm(10,45),'on']]},
+  {id:'oven',  name:'Oven',            color:'#f87171', kw:2.2, kind:'cycle', cycle:60,  routine:[[hm(17,45),'on']]},
+  {id:'micro', name:'Microwave',       color:'#fb923c', kw:1.1, kind:'cycle', cycle:4,   routine:[[hm(7,30),'on'],[hm(12,30),'on'],[hm(18,45),'on']]},
+  {id:'kettle',name:'Kettle',          color:'#fde047', kw:2.4, kind:'cycle', cycle:4,   routine:[[hm(6,45),'on'],[hm(10,30),'on'],[hm(15),'on'],[hm(19,30),'on']]},
+  {id:'ev',    name:'EV charger',      color:'#34d399', kw:7.4, kind:'ev',    need:25,   routine:[[hm(18,30),'on']]},
+];
+const DEFAULTS = {
+  misc:0.35, setpoint:22, tmax:34,
+  solarKw:6.5, season:'summer', weather:'1',
+  batKwh:13.5, batKw:5, batMin:10, batMode:'self',
+  impLim:15, expLim:5, pPeak:0.35, pOff:0.15, pFit:0.08, peakS:hm(7), peakE:hm(21),
+};
+const S = Object.assign({}, DEFAULTS);
+
+// ---- runtime state ---------------------------------------------------------
+const run = {};                            // per-appliance runtime
+APPS.forEach(a => run[a.id] = {on:false, p:0, left:0, got:0});
+let tm = 0;                                // minutes since midnight (float)
+let speed = 60, grid = true, auto = true;
+let soc = S.batKwh * 0.4;
+let miscP = S.misc, solarP = 0;
+const T = {};                              // today's totals
+const hist = {};                           // per-minute history
+const SERIES = ['misc','solar','imp','exp','soc', ...APPS.map(a=>a.id)];
+SERIES.forEach(k => hist[k] = new Float32Array(1440).fill(NaN));
+let histIdx = 0;
+const L = {load:0, solar:0, bat:0, grid:0, gridLoad:0, batLoad:0, batChg:0, gridChg:0, exp:0, curt:0, unmet:0, price:0, temp:0};
+
+function newDay(){
+  Object.assign(T, {load:0, solar:0, imp:0, exp:0, gridLoad:0, cost:0, rev:0, unmet:0});
+  SERIES.forEach(k => hist[k].fill(NaN));
+  histIdx = 0;
+}
+newDay();
+
+// ---- model -----------------------------------------------------------------
+function outdoorTemp(m){ const mid = S.tmax-7; return mid + 7*Math.cos(2*Math.PI*(m/60-15)/24); }
+function solarTarget(m){
+  const [r,s] = {summer:[5.5,20], spring:[6.5,18.5], winter:[7.5,17]}[S.season];
+  const h = m/60; if(h<=r || h>=s) return 0;
+  const shape = Math.pow(Math.sin(Math.PI*(h-r)/(s-r)),1.3);
+  const wx = +S.weather;
+  const cloud = wx>=1 ? 1 : clamp(wx + 0.35*Math.sin(m*0.37)*Math.sin(m*0.11+2) + 0.1*Math.sin(m*1.3), 0.05, 1);
+  return S.solarKw*SOLAR_EFF*shape*cloud;
+}
+function hvacState(){
+  const d = L.temp - S.setpoint;
+  if(Math.abs(d) <= 0.5) return {mode:'Idle', duty:0.04};
+  return {mode: d>0 ? 'Cooling' : 'Heating', duty: clamp((Math.abs(d)-0.5)/6, 0.15, 1)};
+}
+function setApp(a, on){
+  const r = run[a.id];
+  if(on){
+    if(a.kind==='ev' && r.got >= a.need - 0.01) r.got = 0;      // new session
+    r.left = a.cycle || 0;
+  }
+  r.on = on;
+}
+function fire(from, to){
+  if(!auto) return;
+  for(const a of APPS) for(const [t,act] of a.routine) if(t>from && t<=to) setApp(a, act==='on');
+}
+
+function advance(ds, dtW){                   // ds sim-seconds, dtW wall-seconds
+  const t1 = tm + ds/60;
+  if(t1 >= 1440){ fire(tm,1440); newDay(); tm = 0; fire(-1, t1-1440); tm = t1-1440; }
+  else { fire(tm,t1); tm = t1; }
+
+  const k = 1 - Math.exp(-dtW/0.3);
+  L.temp = outdoorTemp(tm);
+  const hv = hvacState();
+  let load = 0;
+  for(const a of APPS){
+    const r = run[a.id];
+    let target = 0;
+    if(r.on){
+      target = a.kw;
+      if(a.kind==='hvac') target = a.kw*hv.duty;
+      if(a.cycle){ r.left -= ds/60; if(r.left<=0){ r.on = false; target = 0; } }
+    }
+    r.p += (target - r.p)*k;
+    if(r.p < 0.005 && target===0) r.p = 0;
+    if(a.kind==='ev' && r.on){ r.got += r.p*ds/3600; if(r.got >= a.need){ r.got = a.need; r.on = false; } }
+    load += r.p;
+  }
+  miscP += (S.misc - miscP)*k;
+  load += miscP;
+  solarP += (solarTarget(tm) - solarP)*k;
+  L.load = load; L.solar = solarP;
+
+  // dispatch
+  const cap = S.batKwh, minE = cap*S.batMin/100, h = ds/3600;
+  const peak = S.peakS<=S.peakE ? (tm>=S.peakS && tm<S.peakE) : (tm>=S.peakS || tm<S.peakE);
+  const impLim = grid ? S.impLim : 0, expLim = grid ? S.expLim : 0;
+  Object.assign(L, {batLoad:0, batChg:0, gridChg:0, exp:0, curt:0, unmet:0, gridLoad:0, price: peak?S.pPeak:S.pOff});
+  const direct = Math.min(load, solarP);
+  let need = load-direct, surplus = solarP-direct;
+  const bat = cap>0 && S.batMode!=='idle';
+  if(need>0){
+    if(bat){
+      const avail = Math.min(S.batKw, Math.max(0,soc-minE)/Math.max(h,1e-9)*BAT_EFF);
+      const b = Math.min(need, avail); L.batLoad = b; soc -= b*h/BAT_EFF; need -= b;
+    }
+    L.gridLoad = Math.min(need, impLim); L.unmet = need-L.gridLoad;
+  }
+  if(surplus>0){
+    if(bat){
+      const c = Math.min(S.batKw, surplus, Math.max(0,cap-soc)/Math.max(h,1e-9)/BAT_EFF);
+      L.batChg = c; soc += c*h*BAT_EFF; surplus -= c;
+    }
+    L.exp = Math.min(surplus, expLim); L.curt = surplus-L.exp;
+  }
+  if(S.batMode==='offpeak' && !peak && cap>0 && grid){
+    const room = Math.max(0,cap-soc)/Math.max(h,1e-9)/BAT_EFF;
+    const c = Math.max(0, Math.min(S.batKw-L.batChg, room, impLim-L.gridLoad));
+    L.gridChg = c; soc += c*h*BAT_EFF;
+  }
+  soc = clamp(soc, 0, cap);
+  L.imp = L.gridLoad + L.gridChg;
+  L.bat = L.batLoad - L.batChg - L.gridChg;           // +discharge / -charge
+
+  T.load += load*h; T.solar += solarP*h; T.imp += L.imp*h; T.exp += L.exp*h; T.gridLoad += L.gridLoad*h; T.unmet += L.unmet*h;
+  T.cost += L.imp*h*L.price; T.rev += L.exp*h*S.pFit;
+  record();
+}
+function record(){
+  const idx = clamp(Math.floor(tm),0,1439);
+  const vals = {misc:miscP, solar:solarP, imp:L.imp, exp:L.exp, soc:S.batKwh>0?soc/S.batKwh*100:0};
+  APPS.forEach(a => vals[a.id] = run[a.id].p);
+  for(let i=Math.min(histIdx,idx); i<=idx; i++) for(const k of SERIES) hist[k][i] = vals[k];
+  histIdx = idx;
+}
+function step(dtW, simSec){
+  const n = Math.max(1, Math.ceil(simSec/20));
+  for(let i=0;i<n;i++) advance(simSec/n, dtW/n);
+}
+
+// ---- UI: tiles -------------------------------------------------------------
+const tileEls = {};
+function buildTiles(){
+  const host = $('tiles'); host.innerHTML = '';
+  for(const a of APPS){
+    const d = document.createElement('div'); d.className = 'tile'; d.style.setProperty('--c', a.color);
+    d.innerHTML = `<div class="hd"><span class="nm">${a.name}</span><label class="sw"><input type="checkbox"><span></span></label></div>
+      <div class="kw mono"><span class="v">0.00</span> <small>kW</small></div><div class="bar"><i></i></div><div class="sub"></div>`;
+    if(a.kind==='hvac'){
+      const s = document.createElement('div'); s.className = 'step';
+      s.innerHTML = `<button data-d="-1">&minus;</button><span class="mono sp"></span><button data-d="1">+</button><span class="sub">setpoint</span>`;
+      s.addEventListener('click', e => { const dd = +e.target.dataset.d; if(dd){ S.setpoint = clamp(S.setpoint+dd,16,30); } });
+      d.appendChild(s);
+    }
+    d.querySelector('input').addEventListener('change', e => setApp(a, e.target.checked));
+    host.appendChild(d);
+    tileEls[a.id] = {d, cb:d.querySelector('input'), v:d.querySelector('.v'), bar:d.querySelector('.bar i'), sub:d.querySelector('.sub'), sp:d.querySelector('.sp')};
+  }
+  // misc
+  const m = document.createElement('div'); m.className = 'tile on'; m.style.setProperty('--c','#94a3b8');
+  m.innerHTML = `<div class="hd"><span class="nm">Misc (fridge, lights, standby)</span></div>
+    <div class="kw mono"><span class="v">0.00</span> <small>kW</small></div><div class="bar"><i></i></div>
+    <input type="range" id="misc" min="0" max="2" step="0.05" style="width:100%;accent-color:#94a3b8">`;
+  host.appendChild(m);
+  tileEls.misc = {v:m.querySelector('.v'), bar:m.querySelector('.bar i')};
+  m.querySelector('#misc').value = S.misc;
+  m.querySelector('#misc').addEventListener('input', e => S.misc = +e.target.value);
+}
+function renderTiles(){
+  for(const a of APPS){
+    const r = run[a.id], e = tileEls[a.id];
+    e.v.textContent = f2(r.p);
+    e.bar.style.width = clamp(r.p/a.kw*100,0,100)+'%';
+    e.d.classList.toggle('on', r.on);
+    if(e.cb.checked !== r.on) e.cb.checked = r.on;
+    let sub = r.on ? 'Running' : 'Off';
+    if(a.kind==='hvac'){ const hv = hvacState(); sub = r.on ? `${hv.mode} · ${L.temp.toFixed(0)}°C outside` : 'Off'; e.sp.textContent = S.setpoint+'°C'; }
+    else if(a.cycle && r.on) sub = `Running · ${Math.ceil(r.left)} min left`;
+    else if(a.kind==='ev') sub = r.on ? `Charging · ${f1(r.got)} / ${a.need} kWh` : (r.got>=a.need-0.01 ? `Full · ${a.need} kWh delivered` : (r.got>0 ? `Paused · ${f1(r.got)} / ${a.need} kWh` : 'Unplugged'));
+    e.sub.textContent = sub;
+  }
+  tileEls.misc.v.textContent = f2(miscP);
+  tileEls.misc.bar.style.width = clamp(miscP/2*100,0,100)+'%';
+}
+
+// ---- UI: flow diagram --------------------------------------------------------
+const FLOWS = {   // path from the node toward the house; positive = flow toward house
+  solar:{d:'M170 95 C250 95 300 120 330 168'},
+  grid: {d:'M530 95 C450 95 400 120 370 168'},
+  bat:  {d:'M360 290 L360 254'},
+};
+function buildFlows(){
+  let h = '';
+  for(const k in FLOWS) h += `<path d="${FLOWS[k].d}" fill="none" stroke="#243049" stroke-width="3" stroke-linecap="round"/>
+    <path id="fl_${k}" d="${FLOWS[k].d}" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="1 14" opacity="0"/>`;
+  $('paths').innerHTML = h;
+  for(const k in FLOWS) FLOWS[k].el = $('fl_'+k), FLOWS[k].off = 0;
+}
+function setFlow(k, kw, color, dt){
+  const f = FLOWS[k], el = f.el, m = Math.abs(kw);
+  if(m < 0.02){ el.setAttribute('opacity',0); return; }
+  el.setAttribute('opacity',1); el.setAttribute('stroke',color);
+  el.setAttribute('stroke-width', clamp(2+m*0.9,2,11));
+  const len = 1 + clamp(m*0.6, 0, 8);
+  el.setAttribute('stroke-dasharray', `${len+3} ${16}`);
+  f.off -= Math.sign(kw)*(40+m*18)*dt;
+  el.setAttribute('stroke-dashoffset', f.off);
+}
+function renderFlows(dt){
+  const sign = L.imp>0.02 ? 1 : (L.exp>0.02 ? -1 : 0);
+  const gridKw = L.imp>0 ? L.imp : -L.exp;
+  setFlow('solar', L.solar - L.curt, '#fbbf24', dt);
+  setFlow('grid', gridKw, gridKw>=0 ? '#818cf8' : '#f472b6', dt);
+  setFlow('bat', L.bat, L.bat>=0 ? '#34d399' : '#2dd4bf', dt);
+  $('nSolar').textContent = f1(L.solar);
+  $('nSolarS').textContent = L.curt>0.02 ? `curtailing ${f1(L.curt)} kW` : (S.solarKw+' kWp array');
+  $('nGrid').textContent = f1(Math.abs(gridKw));
+  $('nGridS').textContent = !grid ? 'OUTAGE · islanded' : (sign>0 ? 'importing' : sign<0 ? 'exporting' : 'idle');
+  $('nHouse').textContent = f1(L.load);
+  const pct = S.batKwh>0 ? soc/S.batKwh : 0;
+  $('nBat').textContent = f1(Math.abs(L.bat));
+  $('nBatFill').setAttribute('width', 34*pct);
+  $('nBatFill').setAttribute('fill', pct<0.2 ? '#f87171' : '#34d399');
+  $('nBatS').textContent = S.batKwh>0 ? `${Math.round(pct*100)}% · ${L.bat>0.02?'discharging':L.bat<-0.02?'charging':'standby'}` : 'no battery';
+  $('tariffNow').textContent = `Tariff now $${f2(L.price)}/kWh · feed-in $${f2(S.pFit)}`;
+}
+
+// ---- UI: KPIs, header --------------------------------------------------------
+function renderKpis(){
+  const net = T.cost - T.rev + 0;
+  $('kBill').textContent = (net<0?'-':'') + '$' + f2(Math.abs(net));
+  $('kLoad').textContent = f1(T.load); $('kSolar').textContent = f1(T.solar);
+  $('kImp').textContent = f1(T.imp); $('kExp').textContent = f1(T.exp);
+  $('kSS').textContent = T.load>0.01 ? Math.round(clamp((1-(T.gridLoad+T.unmet)/T.load)*100,0,100))+'%' : '–';
+  $('kTemp').textContent = L.temp.toFixed(0)+'°C';
+  const m = Math.floor(tm);
+  $('clock').textContent = String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+  if(document.activeElement !== $('scrub')) $('scrub').value = m;
+  const bad = !grid || L.unmet>0.02;
+  $('gridChip').className = 'chip'+(bad?' bad':'');
+  $('gridChip').textContent = L.unmet>0.02 ? 'POWER SHORTFALL '+f1(L.unmet)+' kW' : (grid ? 'GRID CONNECTED' : 'ISLANDED · OFF-GRID');
+}
+
+// ---- chart -----------------------------------------------------------------
+const PAD = {l:46,r:12,t:10,b:24};
+let hover = -1;
+const niceMax = v => [1,2,4,5,8,10,15,20,30,40].find(x=>x>=v) || Math.ceil(v/10)*10;
+function drawChart(){
+  const cv = $('chart'), dpr = window.devicePixelRatio||1, w = cv.clientWidth, h = +cv.getAttribute('height');
+  if(cv.width !== Math.round(w*dpr)){ cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const pw = w-PAD.l-PAD.r, ph = h-PAD.t-PAD.b, now = histIdx;
+  let up = 3, dn = 0;
+  for(let i=0;i<=now;i++){
+    let s = hist.misc[i]; for(const a of APPS) s += hist[a.id][i];
+    up = Math.max(up, s, hist.solar[i], hist.imp[i]); dn = Math.max(dn, hist.exp[i]);
+  }
+  const ymax = niceMax(up*1.05), ymin = dn>0.05 ? -niceMax(dn*1.1) : 0;
+  const X = i => PAD.l + i/1439*pw, Y = v => PAD.t + (1-(v-ymin)/(ymax-ymin))*ph;
+  g.font = '11px system-ui'; g.lineWidth = 1;
+  const step = Math.max(ymax,-ymin)<=5?1:Math.max(ymax,-ymin)<=10?2:5;
+  g.textAlign = 'right'; g.textBaseline = 'middle';
+  for(let v=Math.ceil(ymin/step)*step; v<=ymax+1e-9; v+=step){
+    g.strokeStyle = '#1c2538'; g.beginPath(); g.moveTo(PAD.l,Y(v)); g.lineTo(w-PAD.r,Y(v)); g.stroke();
+    g.fillStyle = '#8792a8'; g.fillText(String(v), PAD.l-6, Y(v));
+  }
+  g.textAlign = 'center'; g.textBaseline = 'top';
+  for(let hr=0;hr<=24;hr+=3) g.fillText(String(hr).padStart(2,'0')+':00', PAD.l+hr/24*pw, h-PAD.b+6);
+  // future shading
+  g.fillStyle = 'rgba(255,255,255,.025)'; g.fillRect(X(now), PAD.t, w-PAD.r-X(now), ph);
+  // stacked demand
+  const base = new Float64Array(now+1);
+  const layers = [{c:'#64748b',k:'misc'}, ...APPS.map(a=>({c:a.color,k:a.id}))];
+  for(const ly of layers){
+    const d = hist[ly.k]; g.beginPath();
+    for(let i=0;i<=now;i++){ const y = Y(base[i]+d[i]); i? g.lineTo(X(i),y) : g.moveTo(X(i),y); }
+    for(let i=now;i>=0;i--) g.lineTo(X(i),Y(base[i]));
+    g.closePath(); g.fillStyle = ly.c; g.globalAlpha = .85; g.fill(); g.globalAlpha = 1;
+    for(let i=0;i<=now;i++) base[i] += d[i];
+  }
+  const line = (d,c,wd,dash,sign=1) => { g.beginPath(); for(let i=0;i<=now;i++){ const y = Y(sign*d[i]); i? g.lineTo(X(i),y) : g.moveTo(X(i),y); }
+    g.strokeStyle = c; g.lineWidth = wd; g.setLineDash(dash||[]); g.stroke(); g.setLineDash([]); };
+  line(hist.solar,'#fbbf24',2,[6,4]);
+  line(hist.imp,'#818cf8',2);
+  if(ymin<0) line(hist.exp,'#f472b6',2,null,-1);
+  g.strokeStyle = '#475569'; g.beginPath(); g.moveTo(PAD.l,Y(0)); g.lineTo(w-PAD.r,Y(0)); g.stroke();
+  // now + hover cursors
+  g.strokeStyle = '#38bdf8'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(X(now),PAD.t); g.lineTo(X(now),h-PAD.b); g.stroke();
+  const hv = hover>=0 && hover<=now ? hover : -1;
+  if(hv>=0){ g.strokeStyle = 'rgba(255,255,255,.5)'; g.lineWidth = 1; g.beginPath(); g.moveTo(X(hv),PAD.t); g.lineTo(X(hv),h-PAD.b); g.stroke(); }
+  const i = hv>=0 ? hv : now;
+  let tot = hist.misc[i]; for(const a of APPS) tot += hist[a.id][i];
+  const tt = String(Math.floor(i/60)).padStart(2,'0')+':'+String(i%60).padStart(2,'0');
+  $('readout').textContent = `${tt}  demand ${f2(tot)} · solar ${f2(hist.solar[i])} · grid ${hist.exp[i]>0.01?'−'+f2(hist.exp[i]):f2(hist.imp[i])} kW` + (S.batKwh>0 ? ` · battery ${Math.round(hist.soc[i])}%` : '');
+}
+function buildLegend(){
+  const sw = (c,t) => `<span><span class="d" style="background:${c}"></span>${t}</span>`;
+  $('leg').innerHTML = sw('#64748b','Misc') + APPS.map(a=>sw(a.color,a.name)).join('') +
+    '<span style="color:#fbbf24">- - solar</span><span style="color:#818cf8">— grid import</span><span style="color:#f472b6">— grid export (below zero)</span>';
+}
+
+// ---- controls --------------------------------------------------------------
+const SL = [['solarKw',v=>f1(v)+' kWp'],['tmax',v=>v+'°C'],['batKwh',v=>f1(v)+' kWh'],['batKw',v=>f1(v)+' kW'],
+  ['batMin',v=>v+'%'],['impLim',v=>v+' kW'],['expLim',v=>f1(v)+' kW']];
+function bindControls(){
+  for(const [id,fmt] of SL){
+    $(id).value = S[id]; $(id+'O').textContent = fmt(S[id]);
+    $(id).addEventListener('input', e => {
+      S[id] = +e.target.value; $(id+'O').textContent = fmt(S[id]);
+      if(id==='batKwh') soc = Math.min(soc, S.batKwh);
+    });
+  }
+  for(const id of ['season','weather','batMode']){ $(id).value = S[id]; $(id).addEventListener('input', e => S[id] = e.target.value); }
+  for(const id of ['pPeak','pOff','pFit']){ $(id).value = S[id]; $(id).addEventListener('input', e => S[id] = +e.target.value || 0); }
+  $('speed').addEventListener('click', e => {
+    const b = e.target.closest('button'); if(!b) return;
+    speed = +b.dataset.s;
+    [...$('speed').children].forEach(x => x.classList.toggle('on', x===b));
+  });
+  $('scrub').addEventListener('input', e => {
+    const t = +e.target.value;
+    tm = t; histIdx = Math.min(histIdx, t);             // history after the new time is rewritten as it replays
+    record();
+  });
+  $('auto').addEventListener('change', e => auto = e.target.checked);
+  $('outage').addEventListener('change', e => grid = !e.target.checked);
+  const ch = $('chart');
+  ch.addEventListener('mousemove', e => { const r = ch.getBoundingClientRect(); hover = clamp(Math.round((e.clientX-r.left-PAD.l)/(r.width-PAD.l-PAD.r)*1439),0,1439); });
+  ch.addEventListener('mouseleave', () => hover = -1);
+}
+
+// ---- boot & main loop --------------------------------------------------------
+buildTiles(); buildFlows(); buildLegend(); bindControls();
+// Replay the morning (autopilot on) so the dashboard opens mid-day with real history.
+{ const start = hm(13); tm = 0; while(tm < start - 0.01) advance(30, 5); }
+// make sure nothing in the replay is left half-smoothed
+for(let i=0;i<3;i++) advance(1, 5);
+
+let last = performance.now(), lastChart = 0;
+function frame(now){
+  const dtW = Math.min(0.1, (now-last)/1000); last = now;
+  if(speed>0) step(dtW, dtW*speed); else advance(0.0001, dtW);   // paused: let smoothing settle
+  renderTiles(); renderFlows(dtW); renderKpis();
+  if(now-lastChart > 80){ lastChart = now; drawChart(); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

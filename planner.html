@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Energy Simulator</title>
+<style>
+:root{
+  --bg:#f4f5f7; --panel:#fff; --ink:#1b1f27; --muted:#667085; --line:#e3e6eb;
+  --accent:#2563eb; --solar:#f59e0b; --batt:#10b981; --grid:#6366f1; --export:#ec4899; --bad:#dc2626;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1218; --panel:#181c25; --ink:#e8ebf1; --muted:#8b94a5; --line:#2a303c; --accent:#60a5fa;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+header h1{font-size:18px;margin:0}
+header span{color:var(--muted)}
+.layout{display:grid;grid-template-columns:minmax(320px,430px) 1fr;gap:16px;padding:16px;align-items:start}
+@media(max-width:960px){.layout{grid-template-columns:1fr}}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;display:flex;justify-content:space-between;align-items:center}
+.row{display:grid;grid-template-columns:110px 1fr 70px;gap:10px;align-items:center;margin:6px 0}
+.row label{color:var(--muted)}
+.row output{text-align:right;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent)}
+select,input[type=number],input[type=time]{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:inherit;width:100%}
+.toggle{display:flex;gap:8px;align-items:center;margin:6px 0}
+.sub{font-size:12px;color:var(--muted)}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--muted);text-align:left;font-weight:500;padding:0 4px 4px}
+td{padding:3px 4px;vertical-align:middle}
+td.name{white-space:nowrap}
+.dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
+tr.off td:not(:first-child){opacity:.4}
+td input[type=number]{width:62px}
+td input[type=time]{width:84px}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.stat{background:var(--bg);border-radius:10px;padding:10px 12px}
+.stat b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.stat small{color:var(--muted)}
+.warn{color:var(--bad)}
+canvas{width:100%;display:block;cursor:crosshair}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted);margin-top:6px}
+#readout{font-variant-numeric:tabular-nums;font-size:12px;color:var(--ink);text-transform:none;letter-spacing:0;font-weight:400}
+button{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Home Energy Simulator</h1>
+  <span>Simulate one day of household demand, supplied by solar, battery and the grid.</span>
+</header>
+
+<div class="layout">
+  <div class="col" id="controls">
+    <div class="card" id="cardHouse"><h2>House &amp; appliances <button id="resetBtn" title="Restore defaults">Reset</button></h2>
+      <table id="appTable"></table>
+      <div class="row"><label>Misc / baseline</label><input type="range" id="misc" min="0" max="2" step="0.05"><output id="miscO"></output></div>
+      <div class="sub">Misc covers fridge, standby, lights, TVs, computers, etc. — a constant draw all day.</div>
+    </div>
+
+    <div class="card"><h2>Solar</h2>
+      <div class="row"><label>Array size</label><input type="range" id="solarKw" min="0" max="20" step="0.5"><output id="solarKwO"></output></div>
+      <div class="row"><label>Season</label><select id="season" style="grid-column:2/4"><option value="summer">Summer (long days)</option><option value="spring">Spring / autumn</option><option value="winter">Winter (short days)</option></select></div>
+      <div class="row"><label>Weather</label><select id="weather" style="grid-column:2/4"><option value="1">Clear sky</option><option value="0.6">Partly cloudy</option><option value="0.2">Overcast</option></select></div>
+    </div>
+
+    <div class="card"><h2>Battery storage</h2>
+      <div class="row"><label>Capacity</label><input type="range" id="batKwh" min="0" max="30" step="0.5"><output id="batKwhO"></output></div>
+      <div class="row"><label>Max power</label><input type="range" id="batKw" min="0.5" max="15" step="0.5"><output id="batKwO"></output></div>
+      <div class="row"><label>Start charge</label><input type="range" id="batStart" min="0" max="100" step="5"><output id="batStartO"></output></div>
+      <div class="row"><label>Reserve</label><input type="range" id="batMin" min="0" max="50" step="5"><output id="batMinO"></output></div>
+      <div class="toggle"><input type="checkbox" id="gridCharge"><label for="gridCharge">Charge from grid during off-peak</label></div>
+    </div>
+
+    <div class="card"><h2>Grid connection &amp; tariff</h2>
+      <div class="row"><label>Import limit</label><input type="range" id="impLim" min="2" max="30" step="1"><output id="impLimO"></output></div>
+      <div class="row"><label>Export limit</label><input type="range" id="expLim" min="0" max="15" step="0.5"><output id="expLimO"></output></div>
+      <div class="row"><label>Peak price</label><input type="range" id="pPeak" min="0" max="1" step="0.01"><output id="pPeakO"></output></div>
+      <div class="row"><label>Off-peak price</label><input type="range" id="pOff" min="0" max="1" step="0.01"><output id="pOffO"></output></div>
+      <div class="row"><label>Feed-in tariff</label><input type="range" id="pFit" min="0" max="0.5" step="0.01"><output id="pFitO"></output></div>
+      <div class="row"><label>Peak hours</label><span style="grid-column:2/4;display:flex;gap:6px;align-items:center"><input type="time" id="peakS"> to <input type="time" id="peakE"></span></div>
+      <div class="row"><label>Daily supply</label><input type="range" id="supply" min="0" max="3" step="0.05"><output id="supplyO"></output></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card"><h2>Daily summary</h2><div class="stats" id="stats"></div></div>
+
+    <div class="card">
+      <h2>Demand by appliance (kW) <span id="readout">hover the charts</span></h2>
+      <canvas id="c1" height="230"></canvas>
+      <div class="legend" id="leg1"></div>
+    </div>
+    <div class="card">
+      <h2>Energy flows (kW)</h2>
+      <canvas id="c2" height="260"></canvas>
+      <div class="legend" id="leg2"></div>
+    </div>
+    <div class="card">
+      <h2>Battery state of charge</h2>
+      <canvas id="c3" height="120"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+const DT = 5/60, N = 288;             // 5-minute steps over 24 h
+const BAT_EFF = 0.95, SOLAR_EFF = 0.85;
+
+// ---- appliance definitions -------------------------------------------------
+// kind: 'timed' (runs `runs` times a day, `dur` minutes each, `gap` hours apart)
+//       'ac'    (window + outdoor temperature drives compressor duty)
+//       'ev'    (charges `kwh` energy starting at `start`, at up to `kw`)
+const DEFAULT_APPS = () => [
+  {id:'ac',   name:'Air conditioning', color:'#38bdf8', kind:'ac', on:true,  kw:2.5, start:'12:00', end:'22:00', tmin:18, tmax:34},
+  {id:'wash', name:'Washing machine',  color:'#a78bfa', kind:'timed', on:true, kw:0.5, start:'09:00', dur:90,  runs:1, gap:0},
+  {id:'dry',  name:'Dryer',            color:'#c084fc', kind:'timed', on:true, kw:2.4, start:'10:45', dur:75,  runs:1, gap:0},
+  {id:'oven', name:'Oven',             color:'#f87171', kind:'timed', on:true, kw:2.2, start:'17:45', dur:60,  runs:1, gap:0},
+  {id:'micro',name:'Microwave',        color:'#fb923c', kind:'timed', on:true, kw:1.1, start:'07:30', dur:4,   runs:3, gap:5},
+  {id:'kettle',name:'Kettle',          color:'#fbbf24', kind:'timed', on:true, kw:2.4, start:'06:45', dur:4,   runs:4, gap:3.5},
+  {id:'hw',   name:'Hot water',        color:'#f472b6', kind:'timed', on:true, kw:3.0, start:'01:00', dur:120, runs:1, gap:0},
+  {id:'ev',   name:'EV charger',       color:'#34d399', kind:'ev',  on:true,  kw:7.4, start:'18:30', kwh:25},
+];
+const DEFAULT_STATE = () => ({
+  apps: DEFAULT_APPS(), misc:0.35,
+  solarKw:6.5, season:'summer', weather:'1',
+  batKwh:13.5, batKw:5, batStart:50, batMin:10, gridCharge:false,
+  impLim:15, expLim:5, pPeak:0.35, pOff:0.15, pFit:0.08, peakS:'07:00', peakE:'21:00', supply:1.0,
+});
+let S = DEFAULT_STATE();
+
+const $ = id => document.getElementById(id);
+const mins = t => { const [h,m] = t.split(':').map(Number); return h*60+m; };
+const inWindow = (m, s, e) => s <= e ? (m >= s && m < e) : (m >= s || m < e);
+const fmtT = i => { const m = i*5; return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); };
+const f1 = x => x.toFixed(1), f2 = x => x.toFixed(2);
+
+// ---- simulation ------------------------------------------------------------
+function noise(i){ const x = Math.sin(i*12.9898)*43758.5453; return x - Math.floor(x); }
+
+function simulate(S){
+  const apps = S.apps.map(a => ({a, load:new Float64Array(N)}));
+  const evState = {done:0};
+  const misc = new Float64Array(N).fill(S.misc);
+  const load = new Float64Array(N);
+  const solar = new Float64Array(N);
+  const sun = {summer:[5.5,20.0], spring:[6.5,18.5], winter:[7.5,17.0]}[S.season];
+  const wx = +S.weather;
+
+  for(let i=0;i<N;i++){
+    const m = i*5, h = m/60;
+    for(const o of apps){
+      const a = o.a; if(!a.on) continue;
+      if(a.kind==='timed'){
+        for(let r=0;r<a.runs;r++){
+          const s = (mins(a.start) + r*a.gap*60) % 1440;
+          if(inWindow(m, s, (s + a.dur) % 1440) && a.dur>0) { o.load[i] = a.kw; break; }
+        }
+      } else if(a.kind==='ac'){
+        if(inWindow(m, mins(a.start), mins(a.end))){
+          const temp = (a.tmax+a.tmin)/2 + (a.tmax-a.tmin)/2*Math.cos(2*Math.PI*(h-15)/24);
+          const duty = Math.min(1, Math.max(0, (Math.abs(temp-22)-1)/9));
+          o.load[i] = a.kw*duty;
+        }
+      } else if(a.kind==='ev'){
+        const s = mins(a.start);
+        if(inWindow(m, s, (s+720)%1440) && evState.done < a.kwh){
+          const e = Math.min(a.kw*DT, a.kwh-evState.done);
+          o.load[i] = e/DT; evState.done += e;
+        }
+      }
+    }
+    let l = misc[i]; for(const o of apps) l += o.load[i];
+    load[i] = l;
+    if(h>sun[0] && h<sun[1]){
+      const shape = Math.pow(Math.sin(Math.PI*(h-sun[0])/(sun[1]-sun[0])),1.3);
+      const cloud = wx>=1 ? 1 : Math.max(0.05, wx*(0.55+0.9*noise(i)));
+      solar[i] = S.solarKw*SOLAR_EFF*shape*Math.min(1,cloud);
+    }
+  }
+
+  // dispatch
+  const cap = S.batKwh, minE = cap*S.batMin/100;
+  let soc = cap*S.batStart/100;
+  const r = {apps, misc, load, solar, soc:new Float64Array(N), solarToLoad:new Float64Array(N), batToLoad:new Float64Array(N),
+    gridToLoad:new Float64Array(N), batCharge:new Float64Array(N), gridCharge:new Float64Array(N), exp:new Float64Array(N),
+    curtail:new Float64Array(N), unmet:new Float64Array(N), price:new Float64Array(N), evDone:evState.done};
+  const ps = mins(S.peakS), pe = mins(S.peakE);
+  let throughput = 0;
+
+  for(let i=0;i<N;i++){
+    const m = i*5, peak = inWindow(m, ps, pe);
+    r.price[i] = peak ? S.pPeak : S.pOff;
+    const direct = Math.min(load[i], solar[i]);
+    r.solarToLoad[i] = direct;
+    let need = load[i]-direct, surplus = solar[i]-direct;
+    if(need>0){
+      const avail = cap>0 ? Math.min(S.batKw, Math.max(0,(soc-minE))/DT*BAT_EFF) : 0;
+      const b = Math.min(need, avail);
+      r.batToLoad[i] = b; soc -= b*DT/BAT_EFF; throughput += b*DT; need -= b;
+      const g = Math.min(need, S.impLim);
+      r.gridToLoad[i] = g; r.unmet[i] = need-g;
+    }
+    if(surplus>0 && cap>0){
+      const room = Math.max(0,(cap-soc))/DT/BAT_EFF;
+      const c = Math.min(S.batKw, surplus, room);
+      r.batCharge[i] = c; soc += c*DT*BAT_EFF; surplus -= c;
+    }
+    if(surplus>0){
+      const e = Math.min(surplus, S.expLim);
+      r.exp[i] = e; r.curtail[i] = surplus-e;
+    }
+    if(S.gridCharge && !peak && cap>0){
+      const room = Math.max(0,(cap-soc))/DT/BAT_EFF;
+      const headroom = S.impLim - r.gridToLoad[i];
+      const c = Math.max(0, Math.min(S.batKw - r.batCharge[i], room, headroom));
+      r.gridCharge[i] = c; soc += c*DT*BAT_EFF;
+    }
+    r.soc[i] = soc;
+  }
+
+  const sum = a => a.reduce((x,y)=>x+y,0)*DT;
+  const imp = new Float64Array(N); for(let i=0;i<N;i++) imp[i] = r.gridToLoad[i]+r.gridCharge[i];
+  r.imp = imp;
+  r.kwhLoad = sum(load); r.kwhSolar = sum(solar); r.kwhImp = sum(imp); r.kwhExp = sum(r.exp);
+  r.kwhBatOut = sum(r.batToLoad); r.kwhUnmet = sum(r.unmet); r.kwhCurtail = sum(r.curtail);
+  let cost = 0, rev = 0; for(let i=0;i<N;i++){ cost += imp[i]*DT*r.price[i]; rev += r.exp[i]*DT*S.pFit; }
+  r.cost = cost; r.rev = rev; r.net = cost - rev + S.supply;
+  r.peakImp = Math.max(...imp); r.peakLoad = Math.max(...load);
+  r.selfUse = r.kwhSolar>0 ? Math.min(100,(r.kwhSolar-r.kwhExp-r.kwhCurtail)/r.kwhSolar*100) : 0;
+  r.selfSuff = r.kwhLoad>0 ? (1 - (sum(r.gridToLoad)+sum(r.unmet))/r.kwhLoad)*100 : 0;
+  r.cycles = cap>0 ? throughput/cap : 0;
+  return r;
+}
+
+// ---- UI building -----------------------------------------------------------
+function buildTable(){
+  const t = $('appTable');
+  let h = '<tr><th></th><th>Appliance</th><th>kW</th><th>Start</th><th>Mins</th><th>Runs</th></tr>';
+  S.apps.forEach((a,i) => {
+    let cells;
+    if(a.kind==='timed') cells = `<td><input type="number" min="0" max="20" step="0.1" data-i="${i}" data-k="kw" value="${a.kw}"></td>
+      <td><input type="time" data-i="${i}" data-k="start" value="${a.start}"></td>
+      <td><input type="number" min="1" max="1440" step="1" data-i="${i}" data-k="dur" value="${a.dur}"></td>
+      <td><input type="number" min="1" max="12" step="1" data-i="${i}" data-k="runs" value="${a.runs}" title="Times per day (spaced ${a.gap} h apart)"></td>`;
+    else if(a.kind==='ac') cells = `<td><input type="number" min="0" max="20" step="0.1" data-i="${i}" data-k="kw" value="${a.kw}"></td>
+      <td><input type="time" data-i="${i}" data-k="start" value="${a.start}" title="Window start"></td>
+      <td colspan="2"><input type="time" data-i="${i}" data-k="end" value="${a.end}" title="Window end"></td>`;
+    else cells = `<td><input type="number" min="0" max="22" step="0.1" data-i="${i}" data-k="kw" value="${a.kw}"></td>
+      <td><input type="time" data-i="${i}" data-k="start" value="${a.start}" title="Plug-in time"></td>
+      <td colspan="2"><input type="number" min="0" max="100" step="1" data-i="${i}" data-k="kwh" value="${a.kwh}" title="Energy needed (kWh)" style="width:62px"> kWh</td>`;
+    h += `<tr class="${a.on?'':'off'}"><td class="name"><input type="checkbox" data-i="${i}" data-k="on" ${a.on?'checked':''}> <span class="dot" style="background:${a.color}"></span>${a.name}</td>${cells}</tr>`;
+    if(a.kind==='ac') h += `<tr class="${a.on?'':'off'}"><td></td><td colspan="5" class="sub">Daily temp range
+      <input type="number" data-i="${i}" data-k="tmin" value="${a.tmin}" style="width:52px">°C to
+      <input type="number" data-i="${i}" data-k="tmax" value="${a.tmax}" style="width:52px">°C — compressor duty follows how far outdoor temp is from 22°C.</td></tr>`;
+  });
+  t.innerHTML = h;
+}
+
+const SL = [ // id, unit formatter
+  ['misc',v=>f2(v)+' kW'],['solarKw',v=>f1(v)+' kWp'],['batKwh',v=>f1(v)+' kWh'],['batKw',v=>f1(v)+' kW'],
+  ['batStart',v=>v+'%'],['batMin',v=>v+'%'],['impLim',v=>v+' kW'],['expLim',v=>f1(v)+' kW'],
+  ['pPeak',v=>'$'+f2(v)],['pOff',v=>'$'+f2(v)],['pFit',v=>'$'+f2(v)],['supply',v=>'$'+f2(v)],
+];
+function syncInputs(){
+  for(const [id,fmt] of SL){ $(id).value = S[id]; $(id+'O').textContent = fmt(+S[id]); }
+  ['season','weather','peakS','peakE'].forEach(id => $(id).value = S[id]);
+  $('gridCharge').checked = S.gridCharge;
+}
+function bind(){
+  for(const [id,fmt] of SL) $(id).addEventListener('input', e => { S[id] = +e.target.value; $(id+'O').textContent = fmt(S[id]); update(); });
+  ['season','weather','peakS','peakE'].forEach(id => $(id).addEventListener('input', e => { S[id] = e.target.value; update(); }));
+  $('gridCharge').addEventListener('change', e => { S.gridCharge = e.target.checked; update(); });
+  $('appTable').addEventListener('input', e => {
+    const el = e.target, i = el.dataset.i; if(i===undefined) return;
+    const k = el.dataset.k, a = S.apps[i];
+    if(k==='on'){ a.on = el.checked; el.closest('tr').classList.toggle('off', !a.on); }
+    else if(el.type==='time') { if(el.value) a[k] = el.value; }
+    else if(el.value!=='') a[k] = +el.value;
+    update();
+  });
+  $('resetBtn').addEventListener('click', () => { S = DEFAULT_STATE(); buildTable(); syncInputs(); update(); });
+  for(const id of ['c1','c2','c3']){
+    const c = $(id);
+    c.addEventListener('mousemove', e => { const r = c.getBoundingClientRect(); hover = Math.max(0,Math.min(N-1,Math.floor((e.clientX-r.left-PAD.l)/(r.width-PAD.l-PAD.r)*N))); draw(); });
+    c.addEventListener('mouseleave', () => { hover = -1; draw(); });
+  }
+  window.addEventListener('resize', draw);
+}
+
+// ---- charts ----------------------------------------------------------------
+const PAD = {l:44, r:12, t:10, b:24};
+let R = null, hover = -1;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function setup(cv){
+  const dpr = window.devicePixelRatio||1, w = cv.clientWidth, h = +cv.getAttribute('height');
+  cv.width = w*dpr; cv.height = h*dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  return {g,w,h};
+}
+function frame(g,w,h,ymin,ymax,unit,ticks){
+  const pw = w-PAD.l-PAD.r, ph = h-PAD.t-PAD.b;
+  const X = i => PAD.l + i/(N-1)*pw, Y = v => PAD.t + (1-(v-ymin)/(ymax-ymin))*ph;
+  g.font = '11px system-ui'; g.fillStyle = css('--muted'); g.strokeStyle = css('--line'); g.lineWidth = 1;
+  g.textAlign='right'; g.textBaseline='middle';
+  const step = ticks;
+  for(let v=Math.ceil(ymin/step)*step; v<=ymax+1e-9; v+=step){
+    g.beginPath(); g.moveTo(PAD.l,Y(v)); g.lineTo(w-PAD.r,Y(v)); g.stroke();
+    g.fillText(unit==='%'? v+'%' : String(+v.toFixed(1)), PAD.l-6, Y(v));
+  }
+  g.textAlign='center'; g.textBaseline='top';
+  for(let hr=0;hr<=24;hr+=3) g.fillText(String(hr).padStart(2,'0')+':00', PAD.l+hr/24*pw*(N/(N-1)) - (hr===24?14:0), h-PAD.b+6);
+  g.strokeStyle = css('--muted'); g.beginPath(); g.moveTo(PAD.l,Y(0)); g.lineTo(w-PAD.r,Y(0)); g.stroke();
+  return {X,Y};
+}
+function stack(g,X,Y,layers,sign){ // layers: [{color, data}]
+  const base = new Float64Array(N);
+  for(const L of layers){
+    g.beginPath();
+    for(let i=0;i<N;i++){ const y = Y(base[i]+sign*L.data[i]); i? g.lineTo(X(i),y) : g.moveTo(X(i),y); }
+    for(let i=N-1;i>=0;i--) g.lineTo(X(i),Y(base[i]));
+    g.closePath(); g.fillStyle = L.color; g.globalAlpha = .88; g.fill(); g.globalAlpha = 1;
+    for(let i=0;i<N;i++) base[i] += sign*L.data[i];
+  }
+}
+function line(g,X,Y,data,color,w=2,dash){
+  g.beginPath(); for(let i=0;i<N;i++) i? g.lineTo(X(i),Y(data[i])) : g.moveTo(X(i),Y(data[i]));
+  g.strokeStyle=color; g.lineWidth=w; g.setLineDash(dash||[]); g.stroke(); g.setLineDash([]);
+}
+function cursor(g,X,h){ if(hover<0) return; g.strokeStyle=css('--ink'); g.globalAlpha=.5; g.lineWidth=1;
+  g.beginPath(); g.moveTo(X(hover),PAD.t); g.lineTo(X(hover),h-PAD.b); g.stroke(); g.globalAlpha=1; }
+const niceMax = v => { const s=[1,2,4,5,8,10,15,20,30,40]; return s.find(x=>x>=v) || Math.ceil(v/10)*10; };
+
+function draw(){
+  if(!R) return;
+  const r = R, solarC = css('--solar');
+  // chart 1: demand stack
+  { const {g,w,h} = setup($('c1'));
+    const ymax = niceMax(Math.max(r.peakLoad, 1)*1.05);
+    const {X,Y} = frame(g,w,h,0,ymax,'kW',ymax<=5?1:ymax<=10?2:5);
+    const layers = [{color:'#94a3b8',data:r.misc}, ...r.apps.filter(o=>o.a.on).map(o=>({color:o.a.color,data:o.load}))];
+    stack(g,X,Y,layers,1);
+    line(g,X,Y,r.load,css('--ink'),1.2);
+    cursor(g,X,h);
+  }
+  // chart 2: flows (supply positive, sinks negative)
+  { const {g,w,h} = setup($('c2'));
+    const pos = i => r.solarToLoad[i]+r.batToLoad[i]+r.gridToLoad[i]+r.unmet[i];
+    const neg = i => r.batCharge[i]+r.gridCharge[i]+r.exp[i]+r.curtail[i];
+    let up=1, dn=0; for(let i=0;i<N;i++){ up=Math.max(up,pos(i),r.solar[i]); dn=Math.max(dn,neg(i)); }
+    const ymax = niceMax(up*1.05), ymin = dn>0 ? -niceMax(dn*1.05) : 0;
+    const {X,Y} = frame(g,w,h,ymin,ymax,'kW',Math.max(ymax,-ymin)<=5?1:Math.max(ymax,-ymin)<=10?2:5);
+    stack(g,X,Y,[{color:solarC,data:r.solarToLoad},{color:css('--batt'),data:r.batToLoad},{color:css('--grid'),data:r.gridToLoad},{color:css('--bad'),data:r.unmet}],1);
+    stack(g,X,Y,[{color:'#14b8a6',data:r.batCharge},{color:'#818cf8',data:r.gridCharge},{color:css('--export'),data:r.exp},{color:'#cbd5e1',data:r.curtail}],-1);
+    line(g,X,Y,r.solar,solarC,1.8,[5,3]);
+    line(g,X,Y,r.load,css('--ink'),1.2);
+    cursor(g,X,h);
+  }
+  // chart 3: SoC
+  { const {g,w,h} = setup($('c3'));
+    const {X,Y} = frame(g,w,h,0,100,'%',25);
+    if(S.batKwh>0){
+      const pct = Array.from(r.soc,v=>v/S.batKwh*100);
+      g.beginPath(); pct.forEach((v,i)=> i? g.lineTo(X(i),Y(v)) : g.moveTo(X(i),Y(v)));
+      g.lineTo(X(N-1),Y(0)); g.lineTo(X(0),Y(0)); g.closePath(); g.fillStyle=css('--batt'); g.globalAlpha=.25; g.fill(); g.globalAlpha=1;
+      line(g,X,Y,pct,css('--batt'),2);
+    } else { g.fillStyle=css('--muted'); g.textAlign='center'; g.fillText('No battery configured', w/2, h/2); }
+    cursor(g,X,h);
+  }
+  // readout
+  const ro = $('readout');
+  if(hover<0){ ro.textContent = 'hover the charts'; }
+  else { const i=hover;
+    ro.textContent = `${fmtT(i)}  load ${f2(r.load[i])} · solar ${f2(r.solar[i])} · battery ${r.batToLoad[i]>0?'+'+f2(r.batToLoad[i]):r.batCharge[i]+r.gridCharge[i]>0?'−'+f2(r.batCharge[i]+r.gridCharge[i]):'0.00'} · grid ${r.imp[i]>0?'+'+f2(r.imp[i]):r.exp[i]>0?'−'+f2(r.exp[i]):'0.00'} kW · SoC ${S.batKwh>0?Math.round(r.soc[i]/S.batKwh*100)+'%':'–'}`;
+  }
+}
+
+function legend(){
+  const sw = (c,t) => `<span><span class="dot" style="background:${c}"></span>${t}</span>`;
+  $('leg1').innerHTML = sw('#94a3b8','Misc') + S.apps.filter(a=>a.on).map(a=>sw(a.color,a.name)).join('');
+  $('leg2').innerHTML = [
+    sw(css('--solar'),'Solar → house'), sw(css('--batt'),'Battery → house'), sw(css('--grid'),'Grid → house'), sw(css('--bad'),'Unmet (over import limit)'),
+    sw('#14b8a6','Battery charging (solar)'), sw('#818cf8','Battery charging (grid)'), sw(css('--export'),'Export to grid'), sw('#cbd5e1','Curtailed'),
+  ].join('') + '<span>— dashed: solar generation · solid: house demand</span>';
+}
+
+function stats(){
+  const r = R, cell = (v,l,c) => `<div class="stat"><b class="${c||''}">${v}</b><small>${l}</small></div>`;
+  $('stats').innerHTML = [
+    cell(f1(r.kwhLoad)+' kWh','House consumption'),
+    cell(f1(r.kwhSolar)+' kWh','Solar generated'),
+    cell(f1(r.kwhImp)+' kWh','Grid import'),
+    cell(f1(r.kwhExp)+' kWh','Grid export'),
+    cell(Math.round(r.selfSuff)+'%','Self-sufficiency'),
+    cell(Math.round(r.selfUse)+'%','Solar self-consumed'),
+    cell(f1(r.peakLoad)+' kW','Peak demand'),
+    cell(f1(r.peakImp)+' kW','Peak grid import', r.peakImp>=S.impLim-1e-6?'warn':''),
+    cell(f2(r.cycles)+'','Battery cycles'),
+    cell(`$${f2(r.net)}`,`Daily bill (import $${f2(r.cost)} − export $${f2(r.rev)} + supply)`, r.net<0?'':''),
+    r.kwhUnmet>0.001 ? cell(f1(r.kwhUnmet)+' kWh','Unmet demand — raise import limit','warn') : '',
+  ].join('');
+}
+
+function update(){ R = simulate(S); legend(); stats(); draw(); }
+
+buildTable(); syncInputs(); bind(); update();
+</script>
+</body>
+</html>
