@@ -122,7 +122,8 @@ table.db select{width:78px}
   <label class="row2"><span class="sw" style="--c:var(--accent)"><input type="checkbox" id="auto" checked><span></span></span> Schedules</label>
   <div class="spacer"></div>
   <span class="chip" id="gridChip">GRID CONNECTED</span>
-  <label class="row2"><span class="sw" style="--c:var(--bad)"><input type="checkbox" id="outage"><span></span></span> Grid outage</label>
+  <label class="row2" title="Open the main isolator: the house runs only on solar, battery and generator"><span class="sw" style="--c:var(--bad)"><input type="checkbox" id="cut"><span></span></span> Cut grid connection</label>
+  <label class="row2" title="Simulate a utility power cut"><span class="sw" style="--c:var(--bad)"><input type="checkbox" id="outage"><span></span></span> Grid outage</label>
 </header>
 
 <main>
@@ -216,9 +217,11 @@ table.db select{width:78px}
     <div class="sys">
       <div>
         <div class="sysh">Solar</div>
-        <div class="f"><label>Array size</label><input type="range" id="solarKw" min="0" max="20" step="0.5"><output id="solarKwO"></output></div>
+        <div class="f"><label>Array size</label><input type="range" id="solarKw" min="0" max="30" step="0.5"><output id="solarKwO"></output></div>
         <div class="f"><label>Season</label><select id="season" style="grid-column:2/4"><option value="summer">Summer</option><option value="spring">Spring / autumn</option><option value="winter">Winter</option></select></div>
-        <div class="f"><label>Sky</label><select id="weather" style="grid-column:2/4"><option value="1">Clear</option><option value="0.6">Partly cloudy</option><option value="0.2">Overcast</option></select></div>
+        <div class="f"><label id="cloudLbl">Cloud cover</label><input type="range" id="cloud" min="0" max="100" step="1"><output id="cloudO"></output></div>
+        <div class="f"><label>Dynamic weather</label><span class="sw" style="--c:var(--accent)"><input type="checkbox" id="dynWx"><span></span></span></div>
+        <div class="sub" id="cloudInfo"></div>
       </div>
       <div>
         <div class="sysh">Climate</div>
@@ -228,7 +231,8 @@ table.db select{width:78px}
       </div>
       <div>
         <div class="sysh">Grid tariff</div>
-        <div class="f"><label>Export limit</label><input type="range" id="expLim" min="0" max="15" step="0.5"><output id="expLimO"></output></div>
+        <div class="f"><label>Export to grid</label><span class="sw" style="--c:var(--exp)"><input type="checkbox" id="expOn"><span></span></span></div>
+        <div class="f"><label>Export limit</label><input type="range" id="expLim" min="0" max="30" step="0.5"><output id="expLimO"></output></div>
         <div class="f"><label>Peak / off-peak</label><span style="grid-column:2/4;display:flex;gap:6px"><input type="number" id="pPeak" step="0.01" min="0"><input type="number" id="pOff" step="0.01" min="0"><input type="number" id="pFit" step="0.01" min="0" title="Feed-in"></span></div>
         <div class="hint">$/kWh: peak (07:00&ndash;21:00), off-peak, feed-in.</div>
       </div>
@@ -288,7 +292,7 @@ const normSched = s => { for(const k in s) s[k].forEach(e => { e.days = e.days |
 
 const DEFAULTS = () => ({
   misc:0.35, setpoint:22, tmin:18, tmax:34,
-  solarKw:6.5, season:'summer', weather:'1',
+  solarKw:6.5, season:'summer', cloud:10, dynWx:false, expOn:true,
   modules:3, invKw:5, batMin:10, batMode:'self',
   mainA:63, expLim:5, pPeak:0.35, pOff:0.15, pFit:0.08, peakS:420, peakE:1260,
   genMode:'auto', dieselPrice:1.6, genMaint:0.5,
@@ -305,7 +309,7 @@ CIRCUITS.forEach(c => c.rating = S.ratings[c.id]);
 // ---- runtime state ---------------------------------------------------------
 const run = {}; APPS.forEach(a => run[a.id] = {on:false, p:0, left:0, got:0, need:a.need||0});
 let tm = 0, dow = new Date().getDay(), dayCount = 0;
-let speed = 60, utilityUp = true, mainTrip = false, mainTmr = 0;
+let speed = 60, utilityUp = true, mainTrip = false, mainTmr = 0, mainOff = false;
 let soc = S.modules*MOD_KWH*0.4, miscP = S.misc, solarP = 0, Tin = 24;
 const G = {run:false, warm:0, hold:0, fuel:GEN_TANK, out:0, rate:0, empty:false};
 const T = {}, hist = {};
@@ -316,7 +320,8 @@ const L = {load:0, solar:0, bat:0, imp:0, gridLoad:0, batLoad:0, batChg:0, gridC
 const cap = () => S.modules*MOD_KWH;
 const packKw = () => Math.min(S.invKw, S.modules*MOD_KW);
 const mainKw = () => S.mainA*VOLT/1000;
-const gridOn = () => utilityUp && !mainTrip;
+const gridOn = () => utilityUp && !mainTrip && !mainOff;
+const CLOUD_BLOCK = 0.85;                          // 100% cloud still lets 15% through as diffuse light
 
 function newDay(){
   Object.assign(T, {load:0, solar:0, imp:0, exp:0, gridLoad:0, cost:0, rev:0, unmet:0, genKwh:0, genL:0, genH:0, genCost:0, genMaint:0});
@@ -329,21 +334,26 @@ newDay();
 // ---- environment model -----------------------------------------------------
 // Asymmetric daily curve: lowest near sunrise (05:30), highest about 15:00; the night fall is slower than the morning rise.
 function outdoorTemp(m){
-  const wx = +S.weather;
-  const range = Math.max(2,(S.tmax-S.tmin+dayVar.r))*(0.5+0.5*wx), lo = S.tmin+dayVar.o, hi = lo+range;
+  const range = Math.max(2,(S.tmax-S.tmin+dayVar.r))*(1-0.5*S.cloud/100), lo = S.tmin+dayVar.o, hi = lo+range;
   let t;
   if(m>=330 && m<=900) t = lo + range*(1-Math.cos(Math.PI*(m-330)/570))/2;
   else { const mm = m>900 ? m-900 : m+540; t = hi - range*(1-Math.cos(Math.PI*mm/870))/2; }
   return t + 0.7*Math.sin(m/83+dayCount) + 0.4*Math.sin(m/29+2*dayCount);
 }
+// Cloud cover 0..1. Manual: the slider. Dynamic: the slider is the average; fronts drift through over hours, with faster flicker at partial cover.
+function cloudAt(m){
+  const mean = S.cloud/100;
+  if(!S.dynWx) return mean;
+  const base = clamp(mean + 0.35*Math.sin(m/310 + dayCount*2.3) + 0.15*Math.sin(m/97 + dayCount*0.9), 0, 1);
+  const flick = 0.14*Math.sin(m*0.37)*Math.sin(m*0.11+2)*4*base*(1-base);
+  return clamp(base + flick, 0, 1);
+}
+const clearness = m => 1 - CLOUD_BLOCK*cloudAt(m);                        // fraction of clear-sky output that gets through
 function sunFrac(m){
   const [r,s] = {summer:[5.5,20], spring:[6.5,18.5], winter:[7.5,17]}[S.season];
   const h = m/60; if(h<=r || h>=s) return 0;
-  const shape = Math.pow(Math.sin(Math.PI*(h-r)/(s-r)),1.3), wx = +S.weather;
-  const cloud = wx>=1 ? 1 : clamp(wx + 0.35*Math.sin(m*0.37)*Math.sin(m*0.11+2) + 0.1*Math.sin(m*1.3), 0.05, 1);
-  return shape*cloud;
-}
-// Indoor temperature: heat flows through the envelope, plus sun through windows, plus internal heat; HVAC pumps it out (or in).
+  return Math.pow(Math.sin(Math.PI*(h-r)/(s-r)),1.3)*clearness(m);
+}// Indoor temperature: heat flows through the envelope, plus sun through windows, plus internal heat; HVAC pumps it out (or in).
 const UA = 0.35, C_TH = 3.0, COP = 3.2;
 function hvacControl(){
   const d = Tin - S.setpoint;
@@ -443,7 +453,8 @@ function advance(ds, dtW){                         // ds sim-seconds, dtW wall-s
   // dispatch: solar -> generator -> battery -> grid
   const c0 = cap(), minE = c0*S.batMin/100, pk = packKw();
   const peak = S.peakS<=S.peakE ? (tm>=S.peakS && tm<S.peakE) : (tm>=S.peakS || tm<S.peakE);
-  const impKw = gridOn() ? mainKw() : 0, expKw = gridOn() ? S.expLim : 0;
+  const impKw = gridOn() ? mainKw() : 0, expKw = gridOn() && S.expOn ? S.expLim : 0;
+  L.cloud = cloudAt(tm);
   Object.assign(L, {batLoad:0, batChg:0, gridChg:0, exp:0, curt:0, unmet:0, gridLoad:0, genLoad:0, genChg:0, price: peak?S.pPeak:S.pOff});
   const direct = Math.min(load, solarP);
   let need = load-direct, surplus = solarP-direct;
@@ -638,7 +649,7 @@ function buildFlow(){
     <text id="ldv${i}" x="12" y="32" style="font-size:14px;font-weight:700" class="mono"></text></g>`; });
   svg.innerHTML = `<g>${paths}</g>${h}`;
   for(const k in FLOWS) FLOWS[k].el = $('fl_'+k);
-  svg.querySelector('#bkMain').addEventListener('click', () => { if(mainTrip){ mainTrip = false; mainTmr = 0; } });
+  svg.querySelector('#bkMain').addEventListener('click', () => { if(mainTrip){ mainTrip = false; mainTmr = 0; } else mainOff = !mainOff; });
   svg.querySelectorAll('.bk[data-c]').forEach(g => g.addEventListener('click', () => toggleBreaker(CIRCUITS[+g.dataset.c])));
 }
 function toggleBreaker(c){ if(c.tripped){ c.tripped = false; c.tmr = 0; c.off = false; } else c.off = !c.off; }
@@ -658,7 +669,7 @@ function buildMods(){
   g.innerHTML = h;
 }
 function renderFlows(dt){
-  const gridKw = L.imp>0 ? L.imp : -L.exp, mt = mainTrip || !utilityUp;
+  const gridKw = L.imp>0 ? L.imp : -L.exp, mt = !gridOn();
   setFlow('solar', L.solar - L.curt, '#fbbf24', dt);
   setFlow('grid', mt ? 0 : gridKw, gridKw>=0 ? '#818cf8' : '#f472b6', dt);
   setFlow('bat', L.bat, L.bat>=0 ? '#34d399' : '#2dd4bf', dt);
@@ -676,7 +687,7 @@ function renderFlows(dt){
     if(c.tripped) kn.setAttribute('y', 12);
   });
   $('nGrid').textContent = f1(Math.abs(mt ? 0 : gridKw));
-  $('nGridS').textContent = !utilityUp ? 'OUTAGE' : mainTrip ? 'MAIN TRIPPED' : (L.imp>0.02 ? 'importing' : L.exp>0.02 ? 'exporting' : 'idle');
+  $('nGridS').textContent = !utilityUp ? 'OUTAGE' : mainTrip ? 'MAIN TRIPPED' : mainOff ? 'DISCONNECTED' : (L.imp>0.02 ? 'importing' : L.exp>0.02 ? 'exporting' : !S.expOn ? 'idle · no export' : 'idle');
   $('nSolar').textContent = f1(L.solar);
   $('nSolarS').textContent = L.curt>0.02 ? `curtailing ${f1(L.curt)} kW` : (S.solarKw+' kWp array');
   const c0 = cap(), pct = c0>0 ? soc/c0 : 0;
@@ -688,8 +699,9 @@ function renderFlows(dt){
   $('nGenS').textContent = G.empty ? 'OUT OF FUEL' : G.run ? (G.warm>0 ? 'starting…' : 'running · '+f2(G.rate)+' L/h') : (S.genMode==='auto' ? 'standby (auto)' : 'stopped');
   $('nGenS2').textContent = `tank ${f1(G.fuel)} / ${GEN_TANK} L`;
   $('bkMainT').textContent = S.mainA+' A';
-  $('bkMainK').setAttribute('fill', mainTrip ? '#f87171' : '#34d399'); $('bkMainK').setAttribute('y', mainTrip ? 46 : 37);
-  $('bkMain').querySelector('rect.bb').setAttribute('stroke', mainTrip ? '#f87171' : '#6366f1');
+  $('bkMainK').setAttribute('fill', mainTrip ? '#f87171' : mainOff ? '#6b7893' : '#34d399'); $('bkMainK').setAttribute('y', mainTrip ? 42 : mainOff ? 46 : 37);
+  $('bkMain').querySelector('rect.bb').setAttribute('stroke', mainTrip ? '#f87171' : mainOff ? '#6b7893' : '#6366f1');
+  if($('cut').checked !== mainOff) $('cut').checked = mainOff;
   $('tariffNow').textContent = `Tariff now $${f2(L.price)}/kWh · feed-in $${f2(S.pFit)}`;
 }
 
@@ -722,6 +734,11 @@ function renderPack(){
   $('packInfo').textContent = c0>0 ? `Usable ${f1(c0*(1-S.batMin/100))} kWh above reserve · max ${f1(lim)} kW (${S.invKw<=S.modules*MOD_KW ? 'inverter' : 'pack'}-limited; each module adds ${MOD_KW} kW)` : 'No modules installed.';
   $('modMinus').disabled = S.modules<=0; $('modPlus').disabled = S.modules>=MAX_MODS;
 }
+function renderSolarInfo(){
+  $('cloudLbl').textContent = S.dynWx ? 'Avg cloud cover' : 'Cloud cover';
+  const pct = Math.round(L.cloud*100), out = Math.round(clearness(tm)*100);
+  $('cloudInfo').textContent = sunFrac(tm)>0 ? `Now: ${pct}% cloud → array at ${out}% of clear-sky output (${f1(L.solar)} of ${f1(S.solarKw*SOLAR_EFF*sunFrac(tm)/clearness(tm))} kW)` : `Now: ${pct}% cloud · sun is down`;
+}
 function renderGen(){
   [...$('genMode').children].forEach(b => b.classList.toggle('on', b.dataset.m===S.genMode));
   $('genStatus').textContent = G.empty ? 'Out of fuel — refuel to restart.' : !G.run ? (S.genMode==='auto' ? 'Standby: waiting for an outage or low battery.' : 'Stopped.') :
@@ -749,9 +766,9 @@ function renderKpis(){
   $('clock').textContent = String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
   $('dayName').textContent = DAYS[dow];
   if(document.activeElement !== $('scrub')) $('scrub').value = m;
-  const bad = !utilityUp || mainTrip || L.unmet>0.02 || CIRCUITS.some(c => c.tripped);
+  const bad = !gridOn() || L.unmet>0.02 || CIRCUITS.some(c => c.tripped);
   $('gridChip').className = 'chip'+(bad?' bad':'');
-  $('gridChip').textContent = L.unmet>0.02 ? 'SHORTFALL '+f1(L.unmet)+' kW' : mainTrip ? 'MAIN BREAKER TRIPPED' : !utilityUp ? (G.run ? 'OUTAGE · ON GENERATOR' : 'OUTAGE · OFF-GRID') : CIRCUITS.some(c => c.tripped) ? 'CIRCUIT TRIPPED' : 'GRID CONNECTED';
+  $('gridChip').textContent = L.unmet>0.02 ? 'SHORTFALL '+f1(L.unmet)+' kW' : mainTrip ? 'MAIN BREAKER TRIPPED' : mainOff ? (G.run ? 'DISCONNECTED · ON GENERATOR' : 'DISCONNECTED · OFF-GRID') : !utilityUp ? (G.run ? 'OUTAGE · ON GENERATOR' : 'OUTAGE · OFF-GRID') : CIRCUITS.some(c => c.tripped) ? 'CIRCUIT TRIPPED' : 'GRID CONNECTED';
 }
 
 // ---- chart -----------------------------------------------------------------
@@ -812,12 +829,16 @@ function buildLegend(){
 
 // ---- controls --------------------------------------------------------------
 const SEASON_TEMPS = {summer:[18,34], spring:[10,22], winter:[3,13]};
-const SL = [['solarKw',v=>f1(v)+' kWp'],['tmin',v=>v+'°C'],['tmax',v=>v+'°C'],['invKw',v=>f1(v)+' kW'],['batMin',v=>v+'%'],['expLim',v=>f1(v)+' kW']];
+const SL = [['solarKw',v=>f1(v)+' kWp'],['cloud',v=>v+'%'],['tmin',v=>v+'°C'],['tmax',v=>v+'°C'],['invKw',v=>f1(v)+' kW'],['batMin',v=>v+'%'],['expLim',v=>f1(v)+' kW']];
 function syncSliders(){ for(const [id,fmt] of SL){ $(id).value = S[id]; $(id+'O').textContent = fmt(+S[id]); } }
 function bindControls(){
   for(const [id,fmt] of SL) $(id).addEventListener('input', e => { S[id] = +e.target.value; $(id+'O').textContent = fmt(S[id]); persist(); });
   syncSliders();
-  for(const id of ['season','weather','batMode']){ $(id).value = S[id]; $(id).addEventListener('input', e => {
+  $('dynWx').checked = S.dynWx; $('expOn').checked = S.expOn;
+  $('dynWx').addEventListener('change', e => { S.dynWx = e.target.checked; persist(); });
+  $('expOn').addEventListener('change', e => { S.expOn = e.target.checked; persist(); });
+  $('cut').addEventListener('change', e => mainOff = e.target.checked);
+  for(const id of ['season','batMode']){ $(id).value = S[id]; $(id).addEventListener('input', e => {
     S[id] = e.target.value;
     if(id==='season'){ [S.tmin,S.tmax] = SEASON_TEMPS[S.season]; syncSliders(); }
     persist(); }); }
@@ -853,7 +874,7 @@ function frame(now){
   const dtW = Math.min(0.1, (now-last)/1000); last = now;
   if(speed>0) step(dtW, dtW*speed); else advance(0.0001, dtW);
   renderTiles(); renderFlows(dtW); renderKpis();
-  if(now-lastPanels > 200){ lastPanels = now; renderDb(); renderPack(); renderGen(); }
+  if(now-lastPanels > 200){ lastPanels = now; renderDb(); renderPack(); renderGen(); renderSolarInfo(); }
   if(now-lastChart > 80){ lastChart = now; drawChart(); }
   requestAnimationFrame(frame);
 }

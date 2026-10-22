@@ -13,7 +13,9 @@ A running clock (pause, 1x to 1800x, jump to any time, step between days) with a
 - **Expandable battery pack.** Add or remove 5 kWh modules (up to 8). Each module adds 2.5 kW of power capability, capped by the inverter. A newly added module is empty, so state of charge drops until it fills.
 - **Weather and temperature.** The daily curve is asymmetric (lowest near sunrise, warmest around 15:00, slower cooling at night), with day-to-day variation, small fluctuations, and a narrower swing under cloud. Indoor temperature follows a simple thermal model (insulation, sun through windows, internal heat) so the HVAC works against a real load, and switching it off lets the house warm up.
 - **Schedules.** Per appliance, any number of entries: time, on/off, days of the week, plus run time (cycle appliances) or kWh target (EV). Example: hot water on at 04:00 daily, washing machine Mon/Wed/Sat only, a longer oven roast on Sundays. Schedules are saved in the browser.
-- **Also:** grid outage switch, peak/off-peak/feed-in tariffs, a live timeline of the day, and a running daily bill (grid + fuel + wear - export).
+- **Solar and cloud.** Arrays up to 30 kWp. Output falls linearly with cloud cover (100% cloud leaves 15% as diffuse light). Set a fixed cloud % or switch on dynamic weather, where the slider becomes the average and cloud fronts drift through the day. The panel shows the live cloud % and the resulting array output.
+- **Grid control.** "Cut grid connection" opens the main isolator (or click the main breaker in the diagram) so the house runs only on solar, battery and generator. "Grid outage" simulates a utility cut. An "Export to grid" switch turns export off, so surplus solar is curtailed once the battery is full.
+- **Also:** peak/off-peak/feed-in tariffs, a live timeline of the day, and a running daily bill (grid + fuel + wear - export).
 
 ### `planner.html` – Day planner
 
