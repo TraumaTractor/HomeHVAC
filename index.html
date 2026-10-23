@@ -103,6 +103,20 @@ table.db select{width:78px}
 .days button.on{background:var(--accent);color:#04121c;border-color:var(--accent);font-weight:700}
 .x{color:var(--muted);padding:1px 7px}
 .hint{font-size:12px;color:var(--muted)}
+.chip.warnchip{background:#3a2a10;color:var(--solar);border:0;cursor:pointer}
+.scn{display:flex;flex-wrap:wrap;gap:8px}
+.scn button{padding:6px 12px}
+.log{max-height:280px;overflow:auto;font-size:13px}
+.lg{display:flex;gap:10px;padding:3px 0;border-top:1px solid var(--line)}
+.lg:first-child{border-top:0}
+.lg i{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none;background:var(--muted)}
+.lg.bad i{background:var(--bad)}.lg.warn i{background:var(--solar)}.lg.ok i{background:var(--batt)}
+.lg.app{color:var(--muted)}
+.lt{color:var(--muted);min-width:72px}
+.runctl{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:end;margin-bottom:10px}
+.runctl label{display:flex;flex-direction:column;gap:3px;color:var(--muted);font-size:12px}
+.runctl select{width:auto}
+.runout h3{font-size:12px;color:var(--muted);font-weight:600;margin:14px 0 4px;letter-spacing:.06em;text-transform:uppercase}
 </style>
 </head>
 <body>
@@ -122,6 +136,7 @@ table.db select{width:78px}
   <label class="row2"><span class="sw" style="--c:var(--accent)"><input type="checkbox" id="auto" checked><span></span></span> Schedules</label>
   <div class="spacer"></div>
   <span class="chip" id="gridChip">GRID CONNECTED</span>
+  <button class="chip warnchip" id="alertChip" style="display:none" title="Jump to the event log"></button>
   <label class="row2" title="Open the main isolator: the house runs only on solar, battery and generator"><span class="sw" style="--c:var(--bad)"><input type="checkbox" id="cut"><span></span></span> Cut grid connection</label>
   <label class="row2" title="Simulate a utility power cut"><span class="sw" style="--c:var(--bad)"><input type="checkbox" id="outage"><span></span></span> Grid outage</label>
 </header>
@@ -156,6 +171,11 @@ table.db select{width:78px}
         <div class="kpi"><small>Indoor</small><b class="mono" id="kIn">0&deg;</b></div>
       </div>
     </div>
+  </div>
+
+  <div class="card">
+    <h2>Scenarios <small id="scnDesc">Load a ready-made situation. It replaces your current settings.</small></h2>
+    <div class="scn" id="scn"></div>
   </div>
 
   <div class="card">
@@ -210,6 +230,30 @@ table.db select{width:78px}
     <h2>Today&rsquo;s timeline (kW) <span id="readout" class="mono">hover for values</span></h2>
     <canvas id="chart" height="300"></canvas>
     <div class="legend" id="leg"></div>
+  </div>
+
+  <div class="card" id="logCard">
+    <h2>Event log <small><label><input type="checkbox" id="logApps"> include appliance activity</label> &nbsp; <button id="logClear">Clear</button></small></h2>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="card" id="runCard">
+    <h2>Multi-day runs <small>Fast-forward your current system over many days (generator refuelled daily)</small></h2>
+    <div class="runctl">
+      <label>Length <select id="runLen"><option value="7">1 week</option><option value="30">1 month</option><option value="365">1 year</option></select></label>
+      <label>Weather <select id="runMode"><option value="cal">Follow the calendar (seasons, varying days)</option><option value="cur">Repeat my current settings</option></select></label>
+      <label id="runCal">Hemisphere <select id="runHemi"><option value="N">Northern</option><option value="S">Southern</option></select></label>
+      <label>Starting <select id="runStart"></select></label>
+      <button id="runGo">Run</button><span class="sub" id="runProg"></span>
+    </div>
+    <div class="runout" id="runOut" style="display:none">
+      <div class="kpis" id="runKpis" style="grid-template-columns:repeat(auto-fill,minmax(170px,1fr))"></div>
+      <h3 id="runT1">Energy</h3>
+      <canvas id="runE" height="240"></canvas>
+      <div class="legend"><span><span class="d" style="background:#818cf8"></span>Grid import</span><span><span class="d" style="background:#fb923c"></span>Generator</span><span style="color:#fbbf24">- - solar generated</span><span>&mdash; consumption</span></div>
+      <h3 id="runT2">Cost</h3>
+      <canvas id="runC" height="180"></canvas>
+    </div>
   </div>
 
   <div class="card">
@@ -289,6 +333,7 @@ const DEFAULT_SCHED = () => ({
   ev:    [{t:'21:00',act:'on',kwh:25}],
 });
 const normSched = s => { for(const k in s) s[k].forEach(e => { e.days = e.days || allDays(); e.en = e.en!==false; }); return s; };
+const normEv = l => { l.forEach(e => { e.days = e.days || allDays(); e.en = e.en!==false; }); return l; };
 
 const DEFAULTS = () => ({
   misc:0.35, setpoint:22, tmin:18, tmax:34,
@@ -297,11 +342,11 @@ const DEFAULTS = () => ({
   mainA:63, expLim:5, pPeak:0.35, pOff:0.15, pFit:0.08, peakS:420, peakE:1260,
   genMode:'auto', dieselPrice:1.6, genMaint:0.5,
   ratings:Object.fromEntries(CIRCUITS.map(c => [c.id,c.rating])),
-  sched:normSched(DEFAULT_SCHED()), schedOn:true,
+  sched:normSched(DEFAULT_SCHED()), schedOn:true, events:[],
 });
 const S = DEFAULTS();
 const STORE = 'homegrid.v2';
-try { const saved = JSON.parse(localStorage.getItem(STORE)||'null'); if(saved){ Object.assign(S, saved); S.ratings = Object.assign(DEFAULTS().ratings, saved.ratings); normSched(S.sched); } } catch(e){}
+try { const saved = JSON.parse(localStorage.getItem(STORE)||'null'); if(saved){ Object.assign(S, saved); S.ratings = Object.assign(DEFAULTS().ratings, saved.ratings); normSched(S.sched); S.events = normEv(S.events||[]); } } catch(e){}
 let saveTimer = 0;
 const persist = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try{ localStorage.setItem(STORE, JSON.stringify(S)); }catch(e){} }, 300); };
 CIRCUITS.forEach(c => c.rating = S.ratings[c.id]);
@@ -320,7 +365,10 @@ const L = {load:0, solar:0, bat:0, imp:0, gridLoad:0, batLoad:0, batChg:0, gridC
 const cap = () => S.modules*MOD_KWH;
 const packKw = () => Math.min(S.invKw, S.modules*MOD_KW);
 const mainKw = () => S.mainA*VOLT/1000;
-const gridOn = () => utilityUp && !mainTrip && !mainOff;
+let quiet = false, headless = false, gridEvt = null, ENV = null;   // quiet: no log entries; headless: multi-day run (no history, no log); gridEvt: active scheduled grid event; ENV: climate override for calendar runs
+const gridOn = () => utilityUp && !mainTrip && !mainOff && !gridEvt;
+const SEASONS = {summer:{rise:5.5,set:20}, spring:{rise:6.5,set:18.5}, winter:{rise:7.5,set:17}};
+const climate = () => ENV || {...SEASONS[S.season], tmin:S.tmin, tmax:S.tmax, cloud:S.cloud/100};
 const CLOUD_BLOCK = 0.85;                          // 100% cloud still lets 15% through as diffuse light
 
 function newDay(){
@@ -334,7 +382,8 @@ newDay();
 // ---- environment model -----------------------------------------------------
 // Asymmetric daily curve: lowest near sunrise (05:30), highest about 15:00; the night fall is slower than the morning rise.
 function outdoorTemp(m){
-  const range = Math.max(2,(S.tmax-S.tmin+dayVar.r))*(1-0.5*S.cloud/100), lo = S.tmin+dayVar.o, hi = lo+range;
+  const cl = climate();
+  const range = Math.max(2,(cl.tmax-cl.tmin+dayVar.r))*(1-0.5*cl.cloud), lo = cl.tmin+dayVar.o, hi = lo+range;
   let t;
   if(m>=330 && m<=900) t = lo + range*(1-Math.cos(Math.PI*(m-330)/570))/2;
   else { const mm = m>900 ? m-900 : m+540; t = hi - range*(1-Math.cos(Math.PI*mm/870))/2; }
@@ -342,15 +391,15 @@ function outdoorTemp(m){
 }
 // Cloud cover 0..1. Manual: the slider. Dynamic: the slider is the average; fronts drift through over hours, with faster flicker at partial cover.
 function cloudAt(m){
-  const mean = S.cloud/100;
-  if(!S.dynWx) return mean;
+  const mean = climate().cloud;
+  if(!S.dynWx && !ENV) return mean;
   const base = clamp(mean + 0.35*Math.sin(m/310 + dayCount*2.3) + 0.15*Math.sin(m/97 + dayCount*0.9), 0, 1);
   const flick = 0.14*Math.sin(m*0.37)*Math.sin(m*0.11+2)*4*base*(1-base);
   return clamp(base + flick, 0, 1);
 }
 const clearness = m => 1 - CLOUD_BLOCK*cloudAt(m);                        // fraction of clear-sky output that gets through
 function sunFrac(m){
-  const [r,s] = {summer:[5.5,20], spring:[6.5,18.5], winter:[7.5,17]}[S.season];
+  const {rise:r, set:s} = climate();
   const h = m/60; if(h<=r || h>=s) return 0;
   return Math.pow(Math.sin(Math.PI*(h-r)/(s-r)),1.3)*clearness(m);
 }// Indoor temperature: heat flows through the envelope, plus sun through windows, plus internal heat; HVAC pumps it out (or in).
@@ -368,6 +417,7 @@ function setApp(a, on, o={}){
     if(a.kind==='ev'){ r.need = o.kwh || a.need; if(r.got >= r.need-0.01) r.got = 0; }
     if(a.kind==='cycle') r.left = o.dur || a.cycle;
   }
+  if(r.on !== on) logEv(`${a.name} ${on ? 'started' : 'stopped'}`, 'app');
   r.on = on;
 }
 function fire(from, to){
@@ -405,6 +455,7 @@ function advance(ds, dtW){                         // ds sim-seconds, dtW wall-s
   const t1 = tm + ds/60;
   if(t1 >= 1440){ fire(tm,1440); dow = (dow+1)%7; dayCount++; newDay(); tm = 0; fire(-1, t1-1440); tm = t1-1440; }
   else { fire(tm,t1); tm = t1; }
+  gridEvt = gridWindow();
 
   const h = ds/3600, hh = Math.max(h,1e-9), k = 1 - Math.exp(-dtW/0.3);
   L.temp = outdoorTemp(tm);
@@ -418,10 +469,10 @@ function advance(ds, dtW){                         // ds sim-seconds, dtW wall-s
     if(r.on && !dead){
       target = a.kw;
       if(a.kind==='hvac') target = a.kw*hv.duty;
-      if(a.kind==='cycle'){ r.left -= ds/60; if(r.left<=0){ r.on = false; target = 0; } }
+      if(a.kind==='cycle'){ r.left -= ds/60; if(r.left<=0){ r.on = false; target = 0; logEv(`${a.name} finished`, 'app'); } }
     }
     if(dead) r.p = 0; else { r.p += (target - r.p)*k; if(target===0 && r.p<0.005) r.p = 0; }
-    if(a.kind==='ev' && r.on && !dead){ r.got += r.p*h; if(r.got >= r.need){ r.got = r.need; r.on = false; } }
+    if(a.kind==='ev' && r.on && !dead){ r.got += r.p*h; if(r.got >= r.need){ r.got = r.need; r.on = false; logEv(`EV charged: ${f1(r.need)} kWh delivered`, 'app'); } }
     if(a.kind==='hvac') hvacP = r.p;
   }
   const cm = CIRC_OF.misc;
@@ -434,7 +485,7 @@ function advance(ds, dtW){                         // ds sim-seconds, dtW wall-s
     c.amps = c.p*1000/VOLT;
     if(!c.tripped && !c.off){
       const ratio = c.amps/c.rating;
-      if(ratio>1){ c.tmr += dtW*(ratio>=2 ? 10 : 1); if(c.tmr>=2){ c.tripped = true; c.tmr = 0; } }
+      if(ratio>1){ c.tmr += dtW*(ratio>=2 ? 10 : 1); if(c.tmr>=2){ c.tripped = true; c.tmr = 0; logEv(`${c.name} breaker tripped: ${c.amps.toFixed(1)} A on a ${c.rating} A breaker`, 'bad'); } }
       else c.tmr = Math.max(0, c.tmr - dtW);
     }
     load += c.p;
@@ -491,7 +542,7 @@ function advance(ds, dtW){                         // ds sim-seconds, dtW wall-s
   L.bat = L.batLoad - L.batChg - L.gridChg - L.genChg;                    // +discharge / -charge
 
   // main breaker: sustained demand above its rating trips it
-  if(utilityUp && !mainTrip && L.unmet>0.02){ mainTmr += dtW; if(mainTmr>=2){ mainTrip = true; mainTmr = 0; } }
+  if(gridOn() && L.unmet>0.02){ mainTmr += dtW; if(mainTmr>=2){ mainTrip = true; mainTmr = 0; logEv(`Main breaker tripped: demand exceeded ${f1(mainKw())} kW`, 'bad'); } }
   else mainTmr = Math.max(0, mainTmr - dtW);
 
   // generator fuel & wear
@@ -505,7 +556,8 @@ function advance(ds, dtW){                         // ds sim-seconds, dtW wall-s
 
   T.load += load*h; T.solar += solarP*h; T.imp += L.imp*h; T.exp += L.exp*h; T.gridLoad += L.gridLoad*h; T.unmet += L.unmet*h;
   T.cost += L.imp*h*L.price; T.rev += L.exp*h*S.pFit;
-  record();
+  if(!headless) record();
+  if(!quiet && !headless) detect();
 }
 function record(){
   const idx = clamp(Math.floor(tm),0,1439), c0 = cap();
@@ -517,6 +569,242 @@ function record(){
 function step(dtW, simSec){
   const n = Math.max(1, Math.ceil(simSec/20));
   for(let i=0;i<n;i++) advance(simSec/n, dtW/n);
+}
+
+// ---- scheduled grid events ---------------------------------------------------
+function gridWindow(){
+  if(!S.schedOn) return null;
+  for(const e of S.events){
+    if(!e.en || !e.from || !e.to) continue;
+    const a = mins(e.from), b = mins(e.to);
+    const on = a<b ? (e.days[dow] && tm>=a && tm<b) : a>b ? ((e.days[dow] && tm>=a) || (e.days[(dow+6)%7] && tm<b)) : false;
+    if(on) return e.kind;
+  }
+  return null;
+}
+
+// ---- event log & alerts ------------------------------------------------------
+const LOG = []; let alerts = 0, logDirty = true;
+const stamp = () => `${DAYS[dow]} ${String(Math.floor(tm/60)).padStart(2,'0')}:${String(Math.floor(tm%60)).padStart(2,'0')}`;
+function logEv(msg, kind='info'){
+  if(quiet || headless) return;
+  LOG.unshift({t:stamp(), msg, kind}); if(LOG.length>400) LOG.pop();
+  if(kind==='bad' || kind==='warn') alerts++;
+  logDirty = true;
+}
+const P = {};
+const socBand = () => {
+  const c = cap(); if(c<=0) return 'none';
+  const p = soc/c*100, pb = P.band;
+  if(p<=S.batMin+0.5 || (pb==='empty' && p<=S.batMin+3)) return 'empty';
+  if(p<20 || (pb==='low' && p<23)) return 'low';
+  if(p>=99.5 || (pb==='full' && p>=97)) return 'full';
+  return 'ok';
+};
+const gridReason = () => !utilityUp ? 'utility outage' : gridEvt==='outage' ? 'scheduled outage' : gridEvt==='cut' ? 'scheduled disconnect' : mainTrip ? 'main breaker tripped' : 'isolator open';
+function syncPrev(){ Object.assign(P, {grid:gridOn(), gen:G.run, empty:G.empty, short:L.unmet>0.02, band:'ok', hot:Tin>28, cold:Tin<16, hi:false}); P.band = socBand(); }
+function detect(){
+  const g = gridOn();
+  if(g !== P.grid){ P.grid = g; logEv(g ? 'Grid power restored' : `Grid lost: ${gridReason()}`, g ? 'ok' : 'bad'); }
+  if(G.run !== P.gen){ P.gen = G.run; logEv(G.run ? `Generator started (${S.genMode==='auto' ? 'auto, battery ' + Math.round(soc/Math.max(cap(),1e-9)*100) + '%' : 'manual'})` : 'Generator stopped', G.run ? 'warn' : 'info'); }
+  if(G.empty && !P.empty) logEv('Generator out of fuel', 'bad');
+  P.empty = G.empty;
+  const sh = L.unmet>0.02;
+  if(sh !== P.short){ P.short = sh; logEv(sh ? `Power shortfall: ${f1(L.unmet)} kW of demand cannot be met` : 'Power shortfall cleared', sh ? 'bad' : 'ok'); }
+  const b = socBand();
+  if(b !== P.band){
+    if(b==='low' && (P.band==='ok' || P.band==='full')) logEv(`Battery low (${Math.round(soc/cap()*100)}%)`, 'warn');
+    else if(b==='empty') logEv('Battery down to its reserve level', 'bad');
+    else if(b==='full') logEv('Battery full', 'ok');
+    P.band = b;
+  }
+  if(!P.hot && Tin>28){ P.hot = true; logEv(`Indoor temperature above 28°C (${f1(Tin)}°C)`, 'warn'); } else if(P.hot && Tin<27) P.hot = false;
+  if(!P.cold && Tin<16){ P.cold = true; logEv(`Indoor temperature below 16°C (${f1(Tin)}°C)`, 'warn'); } else if(P.cold && Tin>17) P.cold = false;
+  const amps = L.load*1000/VOLT;
+  if(!P.hi && amps>0.9*S.mainA){ P.hi = true; logEv(`High demand: ${f1(L.load)} kW is ${Math.round(amps/S.mainA*100)}% of the main breaker`, 'warn'); } else if(P.hi && amps<0.8*S.mainA) P.hi = false;
+}
+function renderLog(){
+  const n = alerts;
+  $('alertChip').style.display = n ? '' : 'none'; $('alertChip').textContent = `⚠ ${n} new alert${n===1?'':'s'}`;
+  if(!logDirty) return; logDirty = false;
+  const showApps = $('logApps').checked, rows = LOG.filter(e => showApps || e.kind!=='app').slice(0,150);
+  $('log').innerHTML = rows.length ? rows.map(e => `<div class="lg ${e.kind}"><span class="mono lt">${e.t}</span><i></i><span>${e.msg}</span></div>`).join('') : '<div class="hint">Nothing to report yet.</div>';
+}
+
+// ---- starting states & scenarios ---------------------------------------------
+function resetRuntime(){
+  APPS.forEach(a => Object.assign(run[a.id], {on:false, p:0, left:0, got:0, need:a.need||0}));
+  CIRCUITS.forEach(c => Object.assign(c, {tripped:false, off:false, tmr:0, p:0, amps:0}));
+  Object.assign(G, {run:false, warm:0, hold:0, fuel:GEN_TANK, out:0, rate:0, empty:false});
+  mainTrip = false; mainTmr = 0; mainOff = false; utilityUp = true; gridEvt = null;
+  soc = cap()*0.4; miscP = S.misc; solarP = 0; Tin = 22; tm = 0; newDay();
+}
+// Replays the day from midnight (with schedules) so the dashboard opens mid-day with real history.
+function startAt(min){
+  quiet = true; resetRuntime();
+  while(tm < min - 0.01) advance(30, 5);
+  for(let i=0;i<3;i++) advance(1, 5);
+  quiet = false; syncPrev();
+}
+const sch = (t, act='on', extra={}) => ({t, act, ...extra});
+const SCENARIOS = [
+  {id:'heat', name:'Heatwave evening', start:'15:30', desc:'42°C afternoon, clear sky. The HVAC works flat out into the evening, with oven and EV charging at peak.',
+    apply(){ Object.assign(S, {season:'summer', tmin:26, tmax:42, cloud:3, dynWx:false, solarKw:8, modules:4, setpoint:21});
+      S.sched.hvac = [sch('09:00'), sch('23:30','off')]; S.sched.oven.push(sch('18:15','on',{dur:90})); S.sched.ev = [sch('18:30','on',{kwh:25})]; }},
+  {id:'blackout', name:'Winter blackout night', start:'16:30', desc:'Cold, overcast, and the grid drops from 17:00 to 23:30. Battery starts at 60%. Watch the generator.',
+    apply(){ Object.assign(S, {season:'winter', tmin:1, tmax:9, cloud:80, dynWx:true, setpoint:21, genMode:'auto'}); S.events = [{from:'17:00', to:'23:30', kind:'outage'}]; },
+    post(){ soc = cap()*0.6; }},
+  {id:'weekend', name:'Weekend at home', start:'08:00', dow:6, desc:'Saturday with everyone in: HVAC all day, laundry, two roasts, constant kettle and microwave.',
+    apply(){ S.misc = 0.6;
+      S.sched.hvac = [sch('08:00'), sch('23:00','off')]; S.sched.wash = [sch('08:30','on',{dur:90}), sch('13:00','on',{dur:90})];
+      S.sched.dry = [sch('10:15','on',{dur:75}), sch('14:30','on',{dur:75})]; S.sched.oven = [sch('12:00','on',{dur:90}), sch('18:00','on',{dur:90})];
+      S.sched.kettle = [7.5,9.5,11.5,14,16,20].map(h => sch(`${String(Math.floor(h)).padStart(2,'0')}:${h%1?'30':'00'}`)); }},
+  {id:'dull', name:'Overcast winter week', start:'07:00', desc:'Heavy, changeable cloud and cold weather. Pair it with a multi-day run to see how the system copes.',
+    apply(){ Object.assign(S, {season:'winter', tmin:2, tmax:11, cloud:85, dynWx:true, solarKw:10, modules:5, setpoint:21}); }},
+  {id:'offgrid', name:'Off-grid cabin', start:'06:00', desc:'No grid connection at all: 12 kWp solar, 40 kWh battery and the generator as backup.',
+    apply(){ Object.assign(S, {season:'spring', tmin:6, tmax:20, cloud:35, dynWx:true, solarKw:12, modules:8, invKw:10, genMode:'auto'}); S.sched.ev = []; S.sched.hw = [sch('11:00','on',{dur:90})]; },
+    post(){ mainOff = true; soc = cap()*0.5; }},
+  {id:'default', name:'Back to defaults', start:'13:00', desc:'Restore the original settings and schedules.', apply(){} },
+];
+function applyScenario(sc){
+  Object.assign(S, DEFAULTS()); sc.apply();
+  normSched(S.sched); normEv(S.events);
+  CIRCUITS.forEach(c => c.rating = S.ratings[c.id]);
+  if(sc.dow != null) dow = sc.dow;
+  startAt(mins(sc.start));
+  if(sc.post) sc.post();
+  syncPrev(); syncUI(); persist();
+  LOG.length = 0; alerts = 0; logEv(`Scenario loaded: ${sc.name}`, 'info');
+}
+function syncUI(){
+  syncSliders();
+  ['season','batMode'].forEach(id => $(id).value = S[id]);
+  ['pPeak','pOff','pFit','dieselPrice','genMaint'].forEach(id => $(id).value = S[id]);
+  $('mainA').value = S.mainA; $('dynWx').checked = S.dynWx; $('expOn').checked = S.expOn; $('auto').checked = S.schedOn; $('outage').checked = !utilityUp;
+  document.querySelectorAll('#dbTable select[data-c]').forEach(s => s.value = CIRCUITS[+s.dataset.c].rating);
+  $('misc').value = S.misc; renderSched(); buildMods();
+}
+
+// ---- multi-day runs ------------------------------------------------------------
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'], MDAYS = [31,28,31,30,31,30,31,31,30,31,30,31];
+let busy = false, runRes = null;
+function snapshot(){
+  const c = o => JSON.parse(JSON.stringify(o));
+  return {v:{tm, dow, dayCount, soc, Tin, miscP, solarP, utilityUp, mainTrip, mainTmr, mainOff, gridEvt, histIdx, dayVar:{...dayVar}},
+    run:c(run), G:c(G), T:c(T), L:c(L), circ:CIRCUITS.map(x => ({tripped:x.tripped, off:x.off, tmr:x.tmr, p:x.p, amps:x.amps})),
+    hist:Object.fromEntries(SERIES.map(k => [k, hist[k].slice()]))};
+}
+function restoreSnap(s){
+  ({tm, dow, dayCount, soc, Tin, miscP, solarP, utilityUp, mainTrip, mainTmr, mainOff, gridEvt, histIdx, dayVar} = s.v);
+  for(const k in s.run) Object.assign(run[k], s.run[k]);
+  Object.assign(G, s.G); Object.assign(T, s.T); Object.assign(L, s.L);
+  CIRCUITS.forEach((x,i) => Object.assign(x, s.circ[i]));
+  SERIES.forEach(k => hist[k].set(s.hist[k]));
+}
+// Seasons for a calendar run: w is 0 in midwinter and 1 in midsummer; weather varies day to day around the cloud slider.
+function calEnv(doy, hemi, dayIdx){
+  const ph = Math.cos(2*Math.PI*(doy-172)/365)*(hemi==='S' ? -1 : 1), w = (1+ph)/2;
+  const cloud = clamp(S.cloud/100 + 0.15*(1-w) + 0.28*Math.sin(dayIdx*1.7+0.4) + 0.18*Math.sin(dayIdx*0.53+1), 0.02, 0.97);
+  return {rise:7.5-2*w, set:17+3*w, tmin:3+15*w, tmax:13+21*w, cloud};
+}
+async function runMulti(){
+  if(busy) return;
+  const days = +$('runLen').value, mode = $('runMode').value, hemi = $('runHemi').value, m0 = +$('runStart').value;
+  const startDoy = MDAYS.slice(0,m0).reduce((a,b) => a+b, 0);
+  busy = true; $('runGo').disabled = true; $('runProg').textContent = 'Starting…';
+  await new Promise(r => setTimeout(r, 30));
+  const snap = snapshot(), keep = {u:utilityUp, off:mainOff}, t0 = performance.now(), rows = [], chunk = days>60 ? 8 : 2;
+  headless = true; resetRuntime(); utilityUp = keep.u; mainOff = keep.off;
+  try {
+    for(let d=0; d<days; d++){
+      dayCount = snap.v.dayCount + d; dow = (snap.v.dow + d) % 7;
+      ENV = mode==='cal' ? calEnv((startDoy+d)%365, hemi, d) : null;
+      newDay(); tm = 0; G.fuel = GEN_TANK; G.empty = false; fire(-1, 0);
+      while(tm + 2 < 1440) advance(120, 5);
+      advance(Math.max(1, (1440-tm)*60 - 0.05), 5);
+      rows.push({load:T.load, solar:T.solar, imp:T.imp, exp:T.exp, gen:T.genKwh, genL:T.genL, gridLoad:T.gridLoad, unmet:T.unmet, bill:T.cost-T.rev+T.genCost+T.genMaint, genCost:T.genCost+T.genMaint});
+      if(d%chunk === chunk-1){ $('runProg').textContent = `Simulating day ${d+1} of ${days}…`; await new Promise(r => setTimeout(r, 0)); }
+    }
+  } finally { ENV = null; headless = false; restoreSnap(snap); syncPrev(); busy = false; $('runGo').disabled = false; }
+  runRes = {rows, m0, days, mode, hemi};
+  $('runProg').textContent = `Done: ${days} days in ${((performance.now()-t0)/1000).toFixed(1)} s.`;
+  $('runOut').style.display = '';
+  $('runT1').textContent = `Energy per ${days<=31 ? 'day' : 'month'} (kWh)`; $('runT2').textContent = `Net cost per ${days<=31 ? 'day' : 'month'} ($)`;
+  renderRunKpis(); drawRun();
+  logEv(`Multi-day run finished: ${days} days`, 'info');
+}
+const money = v => (v<0 ? '-' : '') + '$' + Math.abs(v).toFixed(Math.abs(v)>=1000 ? 0 : 2);
+const fmtE = v => v>=10000 ? (v/1000).toFixed(1)+' MWh' : Math.round(v)+' kWh';
+function renderRunKpis(){
+  const R = runRes.rows, n = R.length, s = k => R.reduce((a,r) => a + r[k], 0), load = s('load');
+  const ss = load>0 ? clamp((1-(s('gridLoad')+s('gen')+s('unmet'))/load)*100, 0, 100) : 0;
+  const cells = [['Total net bill', money(s('bill'))], ['Average per day', money(s('bill')/n)], ['Most expensive day', money(Math.max(...R.map(r => r.bill)))],
+    ['Consumed', fmtE(load)], ['Solar generated', fmtE(s('solar'))], ['Grid imported', fmtE(s('imp'))], ['Grid exported', fmtE(s('exp'))],
+    ['Generator', `${fmtE(s('gen'))} · ${f1(s('genL'))} L`], ['Generator cost', money(s('genCost'))], ['Self-sufficiency', Math.round(ss)+'%'],
+    ['Unmet demand', fmtE(s('unmet'))], ['Days on generator', `${R.filter(r => r.gen>0.01).length} of ${n}`]];
+  $('runKpis').innerHTML = cells.map(([l,v]) => `<div class="kpi"><small>${l}</small><b class="mono" style="font-size:17px">${v}</b></div>`).join('');
+}
+const SUMF = ['load','solar','imp','exp','gen','genL','gridLoad','unmet','bill','genCost'];
+function buckets(){
+  const {rows, m0, days} = runRes, out = [];
+  const mk = label => Object.assign({label, n:0}, Object.fromEntries(SUMF.map(k => [k,0])));
+  const add = (b,r) => { SUMF.forEach(k => b[k] += r[k]); b.n++; };
+  if(days<=31){ rows.forEach((r,i) => { const b = mk(String(i+1)); add(b,r); out.push(b); }); return out; }
+  let mi = m0, left = MDAYS[mi], b = mk(MONTHS[mi]);
+  for(const r of rows){ add(b,r); if(--left===0){ out.push(b); mi = (mi+1)%12; left = MDAYS[mi]; b = mk(MONTHS[mi]); } }
+  if(b.n>0) out.push(b);
+  return out;
+}
+function niceCeil(v){ if(v<=0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))), m = v/p; return (m<=1 ? 1 : m<=2 ? 2 : m<=4 ? 4 : m<=5 ? 5 : 10)*p; }
+function setupCanvas(cv){
+  const dpr = window.devicePixelRatio||1, w = cv.clientWidth, h = +cv.getAttribute('height');
+  cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  return {g, w, h};
+}
+function runAxes(g, w, h, ymin, ymax, labels){
+  const pw = w-PAD.l-PAD.r, ph = h-PAD.t-PAD.b, n = labels.length, slot = pw/n;
+  const Y = v => PAD.t + (1-(v-ymin)/(ymax-ymin))*ph, X = i => PAD.l + slot*(i+0.5);
+  g.font = '11px system-ui'; g.lineWidth = 1; g.textAlign = 'right'; g.textBaseline = 'middle';
+  for(let k=0;k<=4;k++){ const v = ymin + k*(ymax-ymin)/4; g.strokeStyle = '#1c2538'; g.beginPath(); g.moveTo(PAD.l,Y(v)); g.lineTo(w-PAD.r,Y(v)); g.stroke(); g.fillStyle = '#8792a8'; g.fillText(String(Math.abs(v)>=100 ? Math.round(v) : +v.toFixed(1)), PAD.l-6, Y(v)); }
+  g.textAlign = 'center'; g.textBaseline = 'top'; const every = Math.ceil(n/14);
+  labels.forEach((l,i) => { if(i%every===0) g.fillText(l, X(i), h-PAD.b+6); });
+  g.strokeStyle = '#475569'; g.beginPath(); g.moveTo(PAD.l,Y(0)); g.lineTo(w-PAD.r,Y(0)); g.stroke();
+  return {X, Y, slot};
+}
+function drawRun(){
+  if(!runRes || $('runOut').style.display==='none') return;
+  const bs = buckets(), labels = bs.map(b => b.label);
+  { const {g,w,h} = setupCanvas($('runE'));
+    const top = niceCeil(Math.max(1, ...bs.map(b => Math.max(b.imp+b.gen, b.solar, b.load)))*1.05);
+    const {X,Y,slot} = runAxes(g,w,h,0,top,labels), bw = Math.min(40, slot*0.6);
+    bs.forEach((b,i) => { g.fillStyle = '#818cf8'; g.fillRect(X(i)-bw/2, Y(b.imp), bw, Y(0)-Y(b.imp)); g.fillStyle = '#fb923c'; g.fillRect(X(i)-bw/2, Y(b.imp+b.gen), bw, Y(b.imp)-Y(b.imp+b.gen)); });
+    const ln = (key,col,dash) => { g.beginPath(); bs.forEach((b,i) => i ? g.lineTo(X(i),Y(b[key])) : g.moveTo(X(i),Y(b[key]))); g.strokeStyle = col; g.lineWidth = 2; g.setLineDash(dash||[]); g.stroke(); g.setLineDash([]); };
+    ln('solar','#fbbf24',[6,4]); ln('load','#e9edf5');
+  }
+  { const {g,w,h} = setupCanvas($('runC'));
+    const hi = Math.max(...bs.map(b => b.bill)), lo = Math.min(0, ...bs.map(b => b.bill));
+    const top = hi>0 ? niceCeil(hi*1.15) : 1, bot = lo<0 ? -niceCeil(-lo*1.15) : 0;
+    const {X,Y,slot} = runAxes(g,w,h,bot,top,labels), bw = Math.min(40, slot*0.6);
+    bs.forEach((b,i) => { g.fillStyle = b.bill<0 ? '#f472b6' : '#38bdf8'; g.fillRect(X(i)-bw/2, Math.min(Y(b.bill),Y(0)), bw, Math.abs(Y(b.bill)-Y(0)));
+      if(bs.length<=12){ g.fillStyle = '#e9edf5'; g.textAlign = 'center'; g.textBaseline = b.bill<0 ? 'top' : 'bottom'; g.fillText(money(b.bill), X(i), b.bill<0 ? Y(b.bill)+3 : Y(b.bill)-3); } });
+  }
+}
+
+// ---- wiring for scenarios, log and runs ------------------------------------------
+function bindExtras(){
+  $('scn').innerHTML = SCENARIOS.map(s => `<button data-s="${s.id}">${s.name}</button>`).join('');
+  $('scn').addEventListener('click', e => { const b = e.target.closest('button'); if(b) applyScenario(SCENARIOS.find(s => s.id===b.dataset.s)); });
+  $('scn').addEventListener('mouseover', e => { const b = e.target.closest('button'); if(b) $('scnDesc').textContent = SCENARIOS.find(s => s.id===b.dataset.s).desc; });
+  $('scn').addEventListener('mouseleave', () => $('scnDesc').textContent = 'Load a ready-made situation. It replaces your current settings.');
+  $('logApps').addEventListener('change', () => logDirty = true);
+  $('logClear').addEventListener('click', () => { LOG.length = 0; alerts = 0; logDirty = true; });
+  $('alertChip').addEventListener('click', () => { alerts = 0; $('logCard').scrollIntoView({behavior:'smooth', block:'center'}); });
+  $('runStart').innerHTML = MONTHS.map((m,i) => `<option value="${i}">${m}</option>`).join('');
+  $('runStart').value = String(new Date().getMonth());
+  $('runMode').addEventListener('change', () => $('runCal').style.display = $('runMode').value==='cal' ? '' : 'none');
+  $('runGo').addEventListener('click', runMulti);
+  window.addEventListener('resize', drawRun);
 }
 
 // ---- UI: appliance tiles -----------------------------------------------------
@@ -587,22 +875,36 @@ function renderSched(){
     });
     h += `<button data-add="${a.id}">+ Add schedule</button></div></div>`;
   }
+  h += `<div class="app" style="--c:#818cf8"><div class="nm">Grid events</div><div>`;
+  S.events.forEach((e,i) => {
+    h += `<div class="ent ${e.en?'':'off'}" data-a="__grid" data-i="${i}">
+      <input type="checkbox" data-k="en" ${e.en?'checked':''} title="Enabled">
+      <input type="time" data-k="from" value="${e.from}"> to <input type="time" data-k="to" value="${e.to}">
+      <select data-k="kind" style="width:170px"><option value="outage" ${e.kind==='outage'?'selected':''}>Utility outage</option><option value="cut" ${e.kind==='cut'?'selected':''}>Grid cut (isolator open)</option></select>
+      <span class="days">${DAY_ORDER.map(d => `<button data-d="${d}" class="${e.days[d]?'on':''}" title="${DAYS[d]}">${DAY_LETTER[d]}</button>`).join('')}</span>
+      <button class="x" data-del="1" title="Remove">&times;</button></div>`;
+  });
+  h += `<button data-add="__grid">+ Add grid event</button> <span class="hint">The grid is unavailable between the two times on the chosen days (a window can run past midnight).</span></div></div>`;
   $('sched').innerHTML = h;
 }
 function bindSched(){
   const host = $('sched');
   host.addEventListener('click', e => {
     const b = e.target.closest('button'); if(!b) return;
-    if(b.dataset.add){ S.sched[b.dataset.add].push({t:'08:00', act:'on', days:allDays(), en:true}); renderSched(); persist(); return; }
+    if(b.dataset.add){
+      if(b.dataset.add==='__grid') S.events.push({from:'18:00', to:'22:00', kind:'outage', days:allDays(), en:true});
+      else S.sched[b.dataset.add].push({t:'08:00', act:'on', days:allDays(), en:true});
+      renderSched(); persist(); return;
+    }
     const row = b.closest('.ent'); if(!row) return;
-    const list = S.sched[row.dataset.a], i = +row.dataset.i;
+    const list = row.dataset.a==='__grid' ? S.events : S.sched[row.dataset.a], i = +row.dataset.i;
     if(b.dataset.del){ list.splice(i,1); renderSched(); }
     else if(b.dataset.d){ const d = +b.dataset.d; list[i].days[d] = !list[i].days[d]; b.classList.toggle('on', list[i].days[d]); }
     persist();
   });
   host.addEventListener('input', e => {
     const el = e.target, row = el.closest('.ent'); if(!row || !el.dataset.k) return;
-    const ent = S.sched[row.dataset.a][+row.dataset.i], k = el.dataset.k;
+    const ent = (row.dataset.a==='__grid' ? S.events : S.sched[row.dataset.a])[+row.dataset.i], k = el.dataset.k;
     if(k==='en'){ ent.en = el.checked; row.classList.toggle('off', !ent.en); }
     else if(k==='dur' || k==='kwh') ent[k] = el.value ? +el.value : undefined;
     else { ent[k] = el.value; if(k==='act') renderSched(); }
@@ -649,10 +951,13 @@ function buildFlow(){
     <text id="ldv${i}" x="12" y="32" style="font-size:14px;font-weight:700" class="mono"></text></g>`; });
   svg.innerHTML = `<g>${paths}</g>${h}`;
   for(const k in FLOWS) FLOWS[k].el = $('fl_'+k);
-  svg.querySelector('#bkMain').addEventListener('click', () => { if(mainTrip){ mainTrip = false; mainTmr = 0; } else mainOff = !mainOff; });
+  svg.querySelector('#bkMain').addEventListener('click', () => { if(mainTrip){ mainTrip = false; mainTmr = 0; logEv('Main breaker reset', 'info'); } else mainOff = !mainOff; });
   svg.querySelectorAll('.bk[data-c]').forEach(g => g.addEventListener('click', () => toggleBreaker(CIRCUITS[+g.dataset.c])));
 }
-function toggleBreaker(c){ if(c.tripped){ c.tripped = false; c.tmr = 0; c.off = false; } else c.off = !c.off; }
+function toggleBreaker(c){
+  if(c.tripped){ c.tripped = false; c.tmr = 0; c.off = false; logEv(`${c.name} breaker reset`, 'info'); }
+  else { c.off = !c.off; logEv(`${c.name} breaker switched ${c.off ? 'off' : 'on'}`, 'info'); }
+}
 function setFlow(k, kw, color, dt){
   const f = FLOWS[k], el = f.el, m = Math.abs(kw);
   if(m < 0.02){ el.setAttribute('opacity',0); return; }
@@ -687,7 +992,7 @@ function renderFlows(dt){
     if(c.tripped) kn.setAttribute('y', 12);
   });
   $('nGrid').textContent = f1(Math.abs(mt ? 0 : gridKw));
-  $('nGridS').textContent = !utilityUp ? 'OUTAGE' : mainTrip ? 'MAIN TRIPPED' : mainOff ? 'DISCONNECTED' : (L.imp>0.02 ? 'importing' : L.exp>0.02 ? 'exporting' : !S.expOn ? 'idle · no export' : 'idle');
+  $('nGridS').textContent = (!utilityUp || gridEvt==='outage') ? 'OUTAGE' : mainTrip ? 'MAIN TRIPPED' : (mainOff || gridEvt==='cut') ? 'DISCONNECTED' : (L.imp>0.02 ? 'importing' : L.exp>0.02 ? 'exporting' : !S.expOn ? 'idle · no export' : 'idle');
   $('nSolar').textContent = f1(L.solar);
   $('nSolarS').textContent = L.curt>0.02 ? `curtailing ${f1(L.curt)} kW` : (S.solarKw+' kWp array');
   const c0 = cap(), pct = c0>0 ? soc/c0 : 0;
@@ -768,7 +1073,7 @@ function renderKpis(){
   if(document.activeElement !== $('scrub')) $('scrub').value = m;
   const bad = !gridOn() || L.unmet>0.02 || CIRCUITS.some(c => c.tripped);
   $('gridChip').className = 'chip'+(bad?' bad':'');
-  $('gridChip').textContent = L.unmet>0.02 ? 'SHORTFALL '+f1(L.unmet)+' kW' : mainTrip ? 'MAIN BREAKER TRIPPED' : mainOff ? (G.run ? 'DISCONNECTED · ON GENERATOR' : 'DISCONNECTED · OFF-GRID') : !utilityUp ? (G.run ? 'OUTAGE · ON GENERATOR' : 'OUTAGE · OFF-GRID') : CIRCUITS.some(c => c.tripped) ? 'CIRCUIT TRIPPED' : 'GRID CONNECTED';
+  $('gridChip').textContent = L.unmet>0.02 ? 'SHORTFALL '+f1(L.unmet)+' kW' : mainTrip ? 'MAIN BREAKER TRIPPED' : !gridOn() ? `${(!utilityUp || gridEvt==='outage') ? 'OUTAGE' : 'DISCONNECTED'} · ${G.run ? 'ON GENERATOR' : 'OFF-GRID'}` : CIRCUITS.some(c => c.tripped) ? 'CIRCUIT TRIPPED' : 'GRID CONNECTED';
 }
 
 // ---- chart -----------------------------------------------------------------
@@ -866,15 +1171,15 @@ function bindControls(){
 
 // ---- boot & main loop --------------------------------------------------------
 buildTiles(); buildFlow(); buildMods(); buildDbTable(); renderSched(); bindSched(); buildLegend(); bindControls();
-{ const start = 13*60; tm = 0; Tin = 22; while(tm < start - 0.01) advance(30, 5); }
-for(let i=0;i<3;i++) advance(1, 5);
+startAt(13*60); bindExtras(); logEv('Simulation started', 'info');
 
 let last = performance.now(), lastChart = 0, lastPanels = 0;
 function frame(now){
   const dtW = Math.min(0.1, (now-last)/1000); last = now;
+  if(busy){ requestAnimationFrame(frame); return; }                        // a multi-day run owns the model
   if(speed>0) step(dtW, dtW*speed); else advance(0.0001, dtW);
   renderTiles(); renderFlows(dtW); renderKpis();
-  if(now-lastPanels > 200){ lastPanels = now; renderDb(); renderPack(); renderGen(); renderSolarInfo(); }
+  if(now-lastPanels > 200){ lastPanels = now; renderDb(); renderPack(); renderGen(); renderSolarInfo(); renderLog(); }
   if(now-lastChart > 80){ lastChart = now; drawChart(); }
   requestAnimationFrame(frame);
 }
